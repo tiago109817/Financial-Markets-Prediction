@@ -1,1 +1,73 @@
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+
+
+# ─────────────────────────────────────────────
+# Shared plot settings
+# ─────────────────────────────────────────────
+
+COLORS = {
+    "SP500":   "#2196F3",   # blue
+    "Gold":    "#FFC107",   # amber
+    "EUR/USD": "#4CAF50",   # green
+    "Bitcoin": "#FF5722",   # deep orange
+}
+
+
+def _format_x_axis(ax):
+    """Formats the x-axis to show years cleanly."""
+    ax.xaxis.set_major_locator(mdates.YearLocator(5))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+    plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha="right")
+
+
+# ─────────────────────────────────────────────
+# Plot functions
+# ─────────────────────────────────────────────
+
+def plot_close(assets):
+    """
+    Plots Close Price vs Time for all assets.
+    Each asset gets its own subplot so that different price scales don't overlap.
+
+    Parameters:
+        assets : dict  {name: DataFrame}  e.g. {"SP500": sp500, ...}
+    """
+    n = len(assets)
+    fig, axes = plt.subplots(n, 1, figsize=(12, 3.5 * n))
+    fig.suptitle("Close Price over Time", fontsize=16, fontweight="bold", y=1.01)
+
+    for ax, (name, df) in zip(axes, assets.items()):
+        ax.plot(df["Date"], df["Close"], color=COLORS[name], linewidth=1.2)
+        ax.set_title(name, fontsize=12, fontweight="bold")
+        ax.set_ylabel("Price")
+        ax.grid(True, alpha=0.3)
+        _format_x_axis(ax)
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_log_returns(assets):
+    """
+    Plots Log Returns vs Time for all assets.
+    All assets are shown on the same chart for easy comparison.
+
+    Parameters:
+        assets : dict  {name: DataFrame}  e.g. {"SP500": sp500, ...}
+    """
+    fig, ax = plt.subplots(figsize=(14, 5))
+    fig.suptitle("Log Returns over Time", fontsize=16, fontweight="bold")
+
+    for name, df in assets.items():
+        ax.plot(df["Date"], df["Log_Return"], color=COLORS[name],
+                linewidth=0.6, alpha=0.8, label=name)
+
+    ax.axhline(0, color="black", linewidth=0.8, linestyle="--")
+    ax.set_ylabel("Log Return")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    _format_x_axis(ax)
+
+    plt.tight_layout()
+    plt.show()

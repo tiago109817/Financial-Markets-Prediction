@@ -1,0 +1,22 @@
+from data import sp500, gold, eur_usd, bitcoin
+from visual import plot_close, plot_log_returns
+
+
+# ─────────────────────────────────────────────
+# Group all assets into a single dict for convenience
+# ─────────────────────────────────────────────
+
+assets = {
+    "SP500":   sp500,
+    "Gold":    gold,
+    "EUR/USD": eur_usd,
+    "Bitcoin": bitcoin,
+}
+
+
+# ─────────────────────────────────────────────
+# Visualizations
+# ─────────────────────────────────────────────
+
+plot_close(assets)
+plot_log_returns(assets)
