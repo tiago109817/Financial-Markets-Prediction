@@ -1,5 +1,5 @@
 from data import sp500, gold, eur_usd, bitcoin
-from visual import plot_close, plot_log_returns
+from visual import plot_close, plot_log_returns, plot_moving_average
 
 
 # ─────────────────────────────────────────────
@@ -7,10 +7,10 @@ from visual import plot_close, plot_log_returns
 # ─────────────────────────────────────────────
 
 assets = {
+    "Bitcoin": bitcoin,
     "SP500":   sp500,
     "Gold":    gold,
     "EUR/USD": eur_usd,
-    "Bitcoin": bitcoin,
 }
 
 
@@ -20,3 +20,4 @@ assets = {
 
 plot_close(assets)
 plot_log_returns(assets)
+plot_moving_average(assets)

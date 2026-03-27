@@ -1,23 +1,25 @@
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-
+from matplotlib.ticker import FixedLocator
+from datetime import datetime
 
 # ─────────────────────────────────────────────
 # Shared plot settings
 # ─────────────────────────────────────────────
 
 COLORS = {
-    "SP500":   "#2196F3",   # blue
+    "SP500":   "#F33621",   # red
     "Gold":    "#FFC107",   # amber
     "EUR/USD": "#4CAF50",   # green
-    "Bitcoin": "#FF5722",   # deep orange
+    "Bitcoin": "#22BDFF",   # cyan
 }
 
-
 def _format_x_axis(ax):
-    """Formats the x-axis to show years cleanly."""
-    ax.xaxis.set_major_locator(mdates.YearLocator(5))
+    # Ticks automáticos anuais
+    auto_locator = mdates.YearLocator(1)
+    ax.xaxis.set_major_locator(auto_locator)
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+
     plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha="right")
 
 
@@ -41,7 +43,8 @@ def plot_close(assets):
         ax.plot(df["Date"], df["Close"], color=COLORS[name], linewidth=1.2)
         ax.set_title(name, fontsize=12, fontweight="bold")
         ax.set_ylabel("Price")
-        ax.grid(True, alpha=0.3)
+        ax.grid(axis='y', alpha=0.5)
+        #ax.grid(True, alpha=0.3)
         _format_x_axis(ax)
 
     plt.tight_layout()
@@ -68,6 +71,28 @@ def plot_log_returns(assets):
     ax.legend()
     ax.grid(True, alpha=0.3)
     _format_x_axis(ax)
+
+    plt.tight_layout()
+    plt.show()
+    
+def plot_moving_average(assets):
+    """
+    Plots Moving Average vs Time for all assets.
+    Each asset gets its own subplot so that different price scales don't overlap.
+
+    Parameters:
+        assets : dict  {name: DataFrame}  e.g. {"SP500": sp500, ...}
+    """
+    n = len(assets)
+    fig, axes = plt.subplots(n, 1, figsize=(12, 3.5 * n))
+    fig.suptitle("Moving Average over Time", fontsize=16, fontweight="bold", y=1.01)
+
+    for ax, (name, df) in zip(axes, assets.items()):
+        ax.plot(df["Date"], df["Moving_Average"], color=COLORS[name], linewidth=1.2)
+        ax.set_title(name, fontsize=12, fontweight="bold")
+        ax.set_ylabel("Price")
+        ax.grid(axis='y', alpha=0.5)
+        _format_x_axis(ax)
 
     plt.tight_layout()
     plt.show()

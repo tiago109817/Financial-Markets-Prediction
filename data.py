@@ -22,8 +22,16 @@ def compute_log_returns(prices):
     """
     return np.log(prices / prices.shift(1))
 
+def compute_moving_average(prices):
+    """
+    Computes moving average from a price series.
+    This is done to smooth out the price vs time curve.
+    Some of the first and last values are NaN because there is no previous or next price.
+    """
+    return (prices + prices.shift(1) + prices.shift(-1) + prices.shift(2) + prices.shift(-2) + prices.shift(3) 
+            + prices.shift(-3) + prices.shift(4) + prices.shift(-4) + prices.shift(5) + prices.shift(-5) + prices.shift(6) + prices.shift(-6)) / 13
 
-def load_asset(filepath, date_format=None):
+def load_asset(filepath):
     """
     Reads an Excel file and returns a clean DataFrame with:
       - Date       : parsed datetime, sorted from oldest to newest
@@ -42,11 +50,8 @@ def load_asset(filepath, date_format=None):
     df = df[["Date", "Price"]].copy()
     df.columns = ["Date", "Close"]
 
-    # Parse dates — only pass a format when the column is a raw string
-    if date_format:
-        df["Date"] = pd.to_datetime(df["Date"], format=date_format)
-    else:
-        df["Date"] = pd.to_datetime(df["Date"])
+    # Parse dates when the column is a raw string
+    df["Date"] = pd.to_datetime(df["Date"])
 
     # Clean the Close column (removes commas if prices are stored as strings)
     df["Close"] = clean_price(df["Close"])
@@ -56,7 +61,10 @@ def load_asset(filepath, date_format=None):
 
     # Compute log returns
     df["Log_Return"] = compute_log_returns(df["Close"])
-
+    
+    # Compute moving average
+    df["Moving_Average"] = compute_moving_average(df["Close"])
+    
     return df
 
 
@@ -67,7 +75,7 @@ def load_asset(filepath, date_format=None):
 # SP500, Gold and EUR/USD: pandas reads the Date column as datetime automatically
 # Bitcoin: dates are plain strings in MM/DD/YYYY format, so we pass the format explicitly
 
-sp500   = load_asset("SP500_2000_2025.xlsx")
-gold    = load_asset("Gold_2000_2025.xlsx")
-eur_usd = load_asset("EUR_USD_2000_2025.xlsx")
-bitcoin = load_asset("Bitcoin_2010_2025.xlsx", date_format="%m/%d/%Y")
+sp500   = load_asset("./data/SP500_2000_2025.xlsx")
+gold    = load_asset("./data/Gold_2000_2025.xlsx")
+eur_usd = load_asset("./data/EUR_USD_2000_2025.xlsx")
+bitcoin = load_asset("./data/Bitcoin_2010_2025.xlsx")
