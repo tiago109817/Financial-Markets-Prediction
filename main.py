@@ -1,5 +1,5 @@
 from data import sp500, gold, eur_usd, bitcoin
-from visual import plot_close, plot_log_returns, plot_moving_average
+from visual import plot_assets, plot_log_returns
 
 
 # ─────────────────────────────────────────────
@@ -18,6 +18,6 @@ assets = {
 # Visualizations
 # ─────────────────────────────────────────────
 
-plot_close(assets)
+plot_assets(assets, mode="close")
+plot_assets(assets, mode="ma")
 plot_log_returns(assets)
-plot_moving_average(assets)
