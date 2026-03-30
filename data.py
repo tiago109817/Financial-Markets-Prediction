@@ -72,9 +72,6 @@ def load_asset(filepath):
 # Load all assets
 # ─────────────────────────────────────────────
 
-# SP500, Gold and EUR/USD: pandas reads the Date column as datetime automatically
-# Bitcoin: dates are plain strings in MM/DD/YYYY format, so we pass the format explicitly
-
 sp500   = load_asset("./data/SP500_2000_2025.xlsx")
 gold    = load_asset("./data/Gold_2000_2025.xlsx")
 eur_usd = load_asset("./data/EUR_USD_2000_2025.xlsx")
