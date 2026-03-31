@@ -21,11 +21,21 @@ CHART_MODES = {
     "ma":    ("Moving_Average", "Moving Average over Time"),
 }
 
-# Default date format for an yearly x-axis (used in all charts)
+# Default date format for an yearly x-axis (used in all charts) with vertical lines every 3 months
 def _format_x_axis(ax):
+    # Major ticks: yearly (with labels)
     ax.xaxis.set_major_locator(mdates.YearLocator(1))
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+
+    # Minor ticks: every 3 months (no labels)
+    ax.xaxis.set_minor_locator(mdates.MonthLocator(interval=3))
+
+    # Draw vertical grid lines for minor ticks
+    ax.grid(which='minor', axis='x', linestyle='--', alpha=0.3)
+
+    # Keep your label formatting
     plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha="right")
+
 
 
 # ─────────────────────────────────────────────

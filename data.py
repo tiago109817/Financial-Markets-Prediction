@@ -22,49 +22,70 @@ def compute_log_returns(prices):
     """
     return np.log(prices / prices.shift(1))
 
+
 def compute_moving_average(prices):
     """
     Computes moving average from a price series.
     This is done to smooth out the price vs time curve.
     Some of the first and last values are NaN because there is no previous or next price.
     """
-    return (prices + prices.shift(1) + prices.shift(-1) + prices.shift(2) + prices.shift(-2) + prices.shift(3) 
+    return (prices + prices.shift(1) + prices.shift(-1) + prices.shift(2) + prices.shift(-2) + prices.shift(3)
             + prices.shift(-3) + prices.shift(4) + prices.shift(-4) + prices.shift(5) + prices.shift(-5) + prices.shift(6) + prices.shift(-6)) / 13
+
+
+def fill_missing_days(df):
+    """
+    Expands a DataFrame to cover every calendar day between its first and last date.
+    Days that were missing (weekends, holidays) are forward-filled from the most
+    recent known closing price, so the series has no gaps.
+
+    This is required for ARIMA and other time-series models that assume a
+    regularly-spaced, gap-free index.
+    """
+    df = df.set_index("Date")
+
+    full_index = pd.date_range(start=df.index.min(), end=df.index.max(), freq="D")
+    df = df.reindex(full_index)
+
+    df["Close"] = df["Close"].ffill()
+
+    df["Log_Return"]     = compute_log_returns(df["Close"])
+    df["Moving_Average"] = compute_moving_average(df["Close"])
+
+    df.index.name = "Date"
+    df = df.reset_index()
+
+    return df
+
 
 def load_asset(filepath):
     """
     Reads an Excel file and returns a clean DataFrame with:
-      - Date       : parsed datetime, sorted from oldest to newest
-      - Close      : closing price as float
-      - Log_Return : log return computed from Close prices
+      - Date           : parsed datetime, one row per calendar day (no gaps)
+      - Close          : closing price as float (weekends/holidays forward-filled)
+      - Log_Return     : log return computed from the filled Close series
+      - Moving_Average : moving average computed from the filled Close series
 
-    Parameters:
-        filepath    : path to the .xlsx file
-        date_format : (optional) format string for pd.to_datetime
-                      Only needed when dates are stored as plain strings (e.g. Bitcoin: "%m/%d/%Y")
-                      Leave as None if pandas already reads them as datetime (SP500, Gold, EUR/USD)
+    Excel format expected:
+        Month | Day | Year | Close
     """
     df = pd.read_excel(filepath)
 
-    # Keep only the columns we need
-    df = df[["Date", "Price"]].copy()
-    df.columns = ["Date", "Close"]
+    # Build Date from the three separate columns — zero ambiguity
+    df["Date"] = pd.to_datetime(
+        df["Year"].astype(int).astype(str) + "-" +
+        df["Month"].astype(int).astype(str).str.zfill(2) + "-" +
+        df["Day"].astype(int).astype(str).str.zfill(2)
+    )
 
-    # Parse dates when the column is a raw string
-    df["Date"] = pd.to_datetime(df["Date"])
+    df = df[["Date", "Close"]].copy()
 
-    # Clean the Close column (removes commas if prices are stored as strings)
     df["Close"] = clean_price(df["Close"])
 
-    # Sort from oldest to newest so log returns are computed in the right order
     df = df.sort_values("Date").reset_index(drop=True)
 
-    # Compute log returns
-    df["Log_Return"] = compute_log_returns(df["Close"])
-    
-    # Compute moving average
-    df["Moving_Average"] = compute_moving_average(df["Close"])
-    
+    df = fill_missing_days(df)
+
     return df
 
 

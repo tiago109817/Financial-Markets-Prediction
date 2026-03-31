@@ -21,3 +21,5 @@ assets = {
 plot_assets(assets, mode="close")
 plot_assets(assets, mode="ma")
 plot_log_returns(assets)
+
+print(sp500[sp500["Date"] <= "2000-01-08"][["Date", "Close"]].to_string(index=False))
