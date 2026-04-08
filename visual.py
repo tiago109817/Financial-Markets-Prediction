@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import pandas as pd
 
 # ─────────────────────────────────────────────
 # Shared plot settings
@@ -93,3 +94,82 @@ def plot_log_returns(assets):
 
     plt.tight_layout()
     plt.show()
+    
+# ─────────────────────────────────────────────
+# ARIMA Evaluation (Quarterly prints)
+# ─────────────────────────────────────────────
+
+def print_quarterly_results(name, forecast_df):
+    """
+    Prints forecast vs real values at:
+    - Apr 1
+    - Jul 1
+    - Oct 1
+    - Jan 1 (next year)
+    """
+
+    print(f"\n{name} — Quarterly Forecast Evaluation")
+    print("=" * 60)
+
+    target_dates = [
+        f"{forecast_df['Date'].dt.year.iloc[0]}-04-01",
+        f"{forecast_df['Date'].dt.year.iloc[0]}-07-01",
+        f"{forecast_df['Date'].dt.year.iloc[0]}-10-01",
+        f"{forecast_df['Date'].dt.year.iloc[0] + 1}-01-01",
+    ]
+
+    for d in target_dates:
+        d = pd.Timestamp(d)
+
+        row = forecast_df[forecast_df["Date"] == d]
+
+        if not row.empty:
+            f = row["Forecast"].values[0]
+            r = row["Real"].values[0]
+            error = ((f - r) / r) * 100
+
+            if name == "EUR/USD":
+                print(f"{d.date()} | Forecast: {f:.4f} | Real: {r:.4f} | Error: {error:.2f}%")
+            else:
+                print(f"{d.date()} | Forecast: {f:.2f} | Real: {r:.2f} | Error: {error:.2f}%")
+
+        else:
+            print(f"{d.date()} | No data available")
+
+
+# ─────────────────────────────────────────────
+# ARIMA Plot
+# ─────────────────────────────────────────────
+
+def plot_forecast_with_train(name, train_df, forecast_df):
+    """
+    Plots:
+    - Training data
+    - Real future data
+    - Forecast
+    """
+
+    fig, ax = plt.subplots(figsize=(12, 4))
+    fig.suptitle(f"{name} — ARIMA Forecast", fontsize=14, fontweight="bold")
+    
+    # Training data
+    ax.plot(train_df["Date"], train_df["Close"],
+            label="Train", linewidth=1.2)
+
+    # Real future
+    ax.plot(forecast_df["Date"], forecast_df["Real"],
+            label="Real", linewidth=1.5)
+
+    # Forecast
+    ax.plot(forecast_df["Date"], forecast_df["Forecast"],
+            linestyle="--", label="Forecast", linewidth=1.5)
+    
+    ax.set_ylabel("Price")
+    ax.legend()
+    ax.grid(axis='y', alpha=0.5)
+
+    _format_x_axis(ax)
+
+    plt.tight_layout()
+    plt.show()
+
