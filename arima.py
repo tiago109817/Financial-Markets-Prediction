@@ -9,7 +9,13 @@ from statsmodels.tsa.arima.model import ARIMA
 
 def fit_arima(log_returns, dates, order=(2, 0, 2)):
     """
-    Fits ARIMA using a proper DatetimeIndex.
+    Fit an ARIMA(p,d,q) model to a log-return series.
+
+    The input is explicitly converted into a pandas Series with a
+    DatetimeIndex to ensure correct temporal structure.
+
+    A daily frequency is enforced to guarantee equally spaced observations,
+    which is a key assumption for ARIMA estimation.
     """
 
     series = pd.Series(
@@ -17,7 +23,7 @@ def fit_arima(log_returns, dates, order=(2, 0, 2)):
         index=pd.DatetimeIndex(dates)
     ).dropna()
 
-    # enforce daily frequency (CRITICAL)
+    # Enforce regular daily spacing (required for consistency)
     series = series.asfreq("D")
 
     model = ARIMA(series, order=order)
@@ -32,7 +38,16 @@ def fit_arima(log_returns, dates, order=(2, 0, 2)):
 
 def reconstruct_prices(last_price, forecasted_returns):
     """
-    Converts forecasted log returns into price series.
+    Reconstruct a price path from forecasted log returns.
+
+    Given:
+        r_t = ln(P_t / P_{t-1})
+
+    The price evolves as:
+        P_t = P_{t-1} * exp(r_t)
+
+    The function iteratively applies this relation starting from
+    the last observed price.
     """
     prices = [last_price]
 
@@ -42,13 +57,21 @@ def reconstruct_prices(last_price, forecasted_returns):
 
     return prices[1:]
 
+
 # ─────────────────────────────────────────────
 # Diagnostics
 # ─────────────────────────────────────────────
 
 def print_model_summary(name, model):
     """
-    Prints ARIMA model parameters and diagnostics.
+    Display key ARIMA diagnostics.
+
+    Includes:
+    - Model order (p, d, q)
+    - Information criteria (AIC, BIC) for model comparison
+    - Estimated parameters
+
+    Useful for evaluating model fit and complexity.
     """
 
     print(f"\n{name} — ARIMA Model Summary")
@@ -67,15 +90,20 @@ def print_model_summary(name, model):
 
 def forecast_asset(name, df, year_n, order=(2, 0, 2)):
     """
-    Trains ARIMA until Jan 1st of year_n and forecasts 1 year ahead (daily).
+    Static (one-shot) ARIMA forecast.
+
+    Procedure:
+    - Train model using data up to Jan 1st of year_n
+    - Forecast log returns for the full following year (daily horizon)
+    - Convert forecasted returns into price levels
 
     Returns:
-        forecast_df : DataFrame with Date, Forecast, Real
-        train       : DataFrame with training data (for plotting)
+        train       : training dataset (for visualization/analysis)
+        forecast_df : DataFrame with Date, Forecast, and Real prices
     """
 
     # ─────────────────────────────────────────
-    # Split train / test
+    # Train / test split
     # ─────────────────────────────────────────
 
     cutoff = pd.Timestamp(f"{year_n}-01-01")
@@ -85,7 +113,7 @@ def forecast_asset(name, df, year_n, order=(2, 0, 2)):
     test  = df[(df["Date"] >= cutoff) & (df["Date"] <= end)].copy()
 
     # ─────────────────────────────────────────
-    # Fit model
+    # Model estimation
     # ─────────────────────────────────────────
 
     model = fit_arima(train["Log_Return"], train["Date"], order=order)
@@ -99,14 +127,14 @@ def forecast_asset(name, df, year_n, order=(2, 0, 2)):
     forecast_returns = model.forecast(steps=steps)
 
     # ─────────────────────────────────────────
-    # Convert to prices
+    # Transform returns → prices
     # ─────────────────────────────────────────
 
     last_price = train["Close"].iloc[-1]
     forecast_prices = reconstruct_prices(last_price, forecast_returns)
 
     # ─────────────────────────────────────────
-    # Build result DataFrame
+    # Assemble results
     # ─────────────────────────────────────────
 
     forecast_df = pd.DataFrame({
@@ -124,10 +152,16 @@ def forecast_asset(name, df, year_n, order=(2, 0, 2)):
 
 def forecast_asset_monthly(name, df, year_n, order=(2, 0, 2)):
     """
-    Rolling ARIMA:
-    - Train until Jan 1st of year_n
-    - Forecast month by month
-    - Retrain after each month using real data
+    Rolling (recursive) ARIMA forecasting with periodic retraining.
+
+    Procedure:
+    - Initial training up to Jan 1st of year_n
+    - Forecast one month ahead
+    - Incorporate REAL observed data into training set
+    - Retrain model and repeat
+
+    This mimics a realistic setting where models are updated as new
+    information becomes available.
 
     Returns:
         train_df, forecast_df
@@ -142,15 +176,14 @@ def forecast_asset_monthly(name, df, year_n, order=(2, 0, 2)):
     all_forecasts = []
 
     current_train = train.copy()
-
     current_date = cutoff
 
     while current_date <= end:
 
-        # Define next month boundary
+        # Define next monthly boundary
         next_month = (current_date + pd.offsets.MonthBegin(1))
 
-        # Slice this month's test data
+        # Extract current month's observations
         test_slice = test[
             (test["Date"] >= current_date) &
             (test["Date"] < next_month)
@@ -161,7 +194,7 @@ def forecast_asset_monthly(name, df, year_n, order=(2, 0, 2)):
             continue
 
         # ─────────────────────────────────────
-        # Fit model on current training data
+        # Fit model on updated training data
         # ─────────────────────────────────────
 
         model = fit_arima(
@@ -173,7 +206,7 @@ def forecast_asset_monthly(name, df, year_n, order=(2, 0, 2)):
         print_model_summary(name, model)
 
         # ─────────────────────────────────────
-        # Forecast this month
+        # Forecast current month
         # ─────────────────────────────────────
 
         steps = len(test_slice)
@@ -196,10 +229,10 @@ def forecast_asset_monthly(name, df, year_n, order=(2, 0, 2)):
 
         current_train = pd.concat([current_train, test_slice], ignore_index=True)
 
-        # Move to next month
+        # Advance to next month
         current_date = next_month
 
-    # Combine all months
+    # Combine all monthly forecasts
     forecast_df = pd.concat(all_forecasts, ignore_index=True)
 
     return train, forecast_df
@@ -211,13 +244,16 @@ def forecast_asset_monthly(name, df, year_n, order=(2, 0, 2)):
 
 def forecast_asset_monthly_propagating(name, df, year_n, order=(2, 0, 2)):
     """
-    Rolling ARIMA:
-    - Train until Jan 1st of year_n
-    - Forecast month by month
-    - Retrain with real data BUT continue price from previous forecast
+    Rolling ARIMA with self-propagating price dynamics.
 
-    Key difference:
-    Forecast path is continuous (does NOT reset to real price each month)
+    Same structure as the standard rolling approach, with one key difference:
+    - The forecast path is continuous across months
+    - Each new forecast starts from the PREVIOUS FORECASTED price,
+      not the last observed real price
+
+    Implication:
+    - Errors accumulate over time (more realistic for long-horizon evaluation)
+    - Avoids artificial “resets” to true values at each retraining step
     """
 
     cutoff = pd.Timestamp(f"{year_n}-01-01")
@@ -231,7 +267,7 @@ def forecast_asset_monthly_propagating(name, df, year_n, order=(2, 0, 2)):
     current_train = train.copy()
     current_date = cutoff
 
-    # THIS is the key difference - restarts from the last forecast, not from last data
+    # Initial price anchor (last observed real value)
     last_price = train["Close"].iloc[-1]
 
     while current_date <= end:
@@ -254,14 +290,14 @@ def forecast_asset_monthly_propagating(name, df, year_n, order=(2, 0, 2)):
             order=order
         )
 
-        # Forecast
+        # Forecast returns
         steps = len(test_slice)
         forecast_returns = model.forecast(steps=steps)
 
-        # KEY CHANGE: use rolling forecast price
+        # Use last forecasted price (not real price)
         forecast_prices = reconstruct_prices(last_price, forecast_returns)
 
-        # Update last_price to LAST FORECAST (not real)
+        # Update anchor with final forecasted value
         last_price = forecast_prices[-1]
 
         forecast_df = pd.DataFrame({
@@ -272,7 +308,7 @@ def forecast_asset_monthly_propagating(name, df, year_n, order=(2, 0, 2)):
 
         all_forecasts.append(forecast_df)
 
-        # Update training with REAL data (model still learns reality)
+        # Model still learns from REAL observations
         current_train = pd.concat([current_train, test_slice], ignore_index=True)
 
         current_date = next_month

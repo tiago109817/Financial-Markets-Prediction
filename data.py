@@ -8,47 +8,73 @@ import numpy as np
 
 def clean_price(series):
     """
-    Converts a price column to float.
-    Needed because some files store prices as strings with commas (e.g. "1,455.20").
+    Convert a price column to numeric (float).
+
+    Some datasets store prices as strings with thousands separators
+    (e.g., "1,455.20"), which must be removed before conversion.
     """
     return series.astype(str).str.replace(",", "").astype(float)
 
 
 def compute_log_returns(prices):
     """
-    Computes log returns from a price series.
-    Log return at time t = ln(P_t / P_{t-1})
-    The first value is NaN because there is no previous price.
+    Compute logarithmic returns of a price series.
+
+    Formula:
+        r_t = ln(P_t / P_{t-1})
+
+    Log returns will be useful as they are stationary and close to zero. 
+    The first observation is NaN.
     """
     return np.log(prices / prices.shift(1))
 
 
 def compute_moving_average(prices):
     """
-    Computes moving average from a price series.
-    This is done to smooth out the price vs time curve.
-    Some of the first and last values are NaN because there is no previous or next price.
+    Compute a centered moving average (window size = 13).
+
+    This smooths short-term fluctuations in the price series by averaging
+    neighboring values symmetrically around each point.
+
+    Boundary values are NaN due to insufficient surrounding data.
+    
+    This was done as I thought the original data had a lot of noise and 
+    I wanted to have a smoother series for visualization and ARIMA modeling.
+    
+    I then discovered a misformatted date column in the original Excel files, 
+    which caused the noise. After fixing the date parsing, the data is much cleaner, 
+    but I kept the moving average as an optional feature.
     """
-    return (prices + prices.shift(1) + prices.shift(-1) + prices.shift(2) + prices.shift(-2) + prices.shift(3)
-            + prices.shift(-3) + prices.shift(4) + prices.shift(-4) + prices.shift(5) + prices.shift(-5) + prices.shift(6) + prices.shift(-6)) / 13
+    return (
+        prices + prices.shift(1) + prices.shift(-1)
+        + prices.shift(2) + prices.shift(-2)
+        + prices.shift(3) + prices.shift(-3)
+        + prices.shift(4) + prices.shift(-4)
+        + prices.shift(5) + prices.shift(-5)
+        + prices.shift(6) + prices.shift(-6)
+    ) / 13
 
 
 def fill_missing_days(df):
     """
-    Expands a DataFrame to cover every calendar day between its first and last date.
-    Days that were missing (weekends, holidays) are forward-filled from the most
-    recent known closing price, so the series has no gaps.
+    Ensure a continuous daily time index.
 
-    This is required for ARIMA and other time-series models that assume a
-    regularly-spaced, gap-free index.
+    - Expands the dataset to include all calendar days
+    - Fills missing prices (e.g., weekends, holidays) using forward fill
+    - Recomputes derived variables on the completed series
+
+    This step is required for time-series models (e.g., ARIMA) that assume
+    regularly spaced observations.
     """
     df = df.set_index("Date")
 
     full_index = pd.date_range(start=df.index.min(), end=df.index.max(), freq="D")
     df = df.reindex(full_index)
 
+    # Forward-fill missing prices
     df["Close"] = df["Close"].ffill()
 
+    # Recompute derived series
     df["Log_Return"]     = compute_log_returns(df["Close"])
     df["Moving_Average"] = compute_moving_average(df["Close"])
 
@@ -57,21 +83,26 @@ def fill_missing_days(df):
 
     return df
 
+# ─────────────────────────────────────────────
+# Main function
+# ─────────────────────────────────────────────
 
 def load_asset(filepath):
     """
-    Reads an Excel file and returns a clean DataFrame with:
-      - Date           : parsed datetime, one row per calendar day (no gaps)
-      - Close          : closing price as float (weekends/holidays forward-filled)
-      - Log_Return     : log return computed from the filled Close series
-      - Moving_Average : moving average computed from the filled Close series
+    Load and preprocess a financial time series from Excel.
 
-    Excel format expected:
+    Output DataFrame:
+        - Date           : daily datetime index (no gaps)
+        - Close          : cleaned closing price (float)
+        - Log_Return     : logarithmic returns
+        - Moving_Average : smoothed price series
+
+    Expected Excel format:
         Month | Day | Year | Close
     """
     df = pd.read_excel(filepath)
 
-    # Build Date from the three separate columns — zero ambiguity
+    # Construct a proper datetime column (avoids ambiguity)
     df["Date"] = pd.to_datetime(
         df["Year"].astype(int).astype(str) + "-" +
         df["Month"].astype(int).astype(str).str.zfill(2) + "-" +
@@ -80,10 +111,13 @@ def load_asset(filepath):
 
     df = df[["Date", "Close"]].copy()
 
+    # Clean and standardize price data
     df["Close"] = clean_price(df["Close"])
 
+    # Ensure chronological ordering
     df = df.sort_values("Date").reset_index(drop=True)
 
+    # Fill missing dates and compute derived features
     df = fill_missing_days(df)
 
     return df

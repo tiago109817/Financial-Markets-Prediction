@@ -18,9 +18,9 @@ assets = {
 # Visualizations — price charts and log returns
 # ─────────────────────────────────────────────
 
-#plot_assets(assets, mode="close")
-#plot_assets(assets, mode="ma")
-#plot_log_returns(assets)
+plot_assets(assets, mode="close")
+plot_assets(assets, mode="ma")
+plot_log_returns(assets)
 
 # ─────────────────────────────────────────────
 # ARIMA Forecasting and Evaluation
@@ -47,4 +47,3 @@ for name, df in assets.items():
 
     print_quarterly_results(name, forecast_df)
     plot_forecast_with_train(name, train, forecast_df)
-
