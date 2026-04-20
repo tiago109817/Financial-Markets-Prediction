@@ -24,7 +24,7 @@ RUN_MONTHLY_PROP = True
 RUN_ROLLING = True
 RUN_ROLLING_PROP = True
 
-year_n = 2024
+year_n = 2025
 
 # ─────────────────────────────────────────────
 # Assets
