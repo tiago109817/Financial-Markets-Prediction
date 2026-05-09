@@ -17,14 +17,14 @@ from arima import (
 # CONFIGURATION FLAGS
 # ─────────────────────────────────────────────
 
-RUN_VISUALS = False
-RUN_STATIC = True
-RUN_MONTHLY = True
-RUN_MONTHLY_PROP = True
-RUN_ROLLING = True
-RUN_ROLLING_PROP = True
+RUN_VISUALS = True
+RUN_STATIC = False
+RUN_MONTHLY = False
+RUN_MONTHLY_PROP = False
+RUN_ROLLING = False
+RUN_ROLLING_PROP = False
 
-year_n = 2025
+year_n = 2020
 
 # ─────────────────────────────────────────────
 # Assets
