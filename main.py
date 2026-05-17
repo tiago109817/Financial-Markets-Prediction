@@ -1,18 +1,23 @@
 from data import sp500, gold, eur_usd, bitcoin
 
-from visual import (
-    plot_assets, plot_log_returns,
-    print_quarterly_results,
-    plot_forecast_with_train,
+from visual import (plot_assets, plot_log_returns)
+
+from runners import (
+    run_arima_final,
+    run_arima_basic,
 )
 
+# ─────────────────────────────────────────────
+# IMPORT MODELS
+# ─────────────────────────────────────────────
+
 from arima import (
-    forecast_asset_monthly,
     # Archived models — uncomment here and set their flag to True to reactivate
-    # forecast_asset,
-    # forecast_asset_monthly_propagating,
-    # forecast_asset_rolling_window,
-    # forecast_asset_rolling_window_propagating,
+    forecast_asset_monthly,
+    forecast_asset,
+    forecast_asset_monthly_propagating,
+    forecast_asset_rolling_window,
+    forecast_asset_rolling_window_propagating,
 )
 
 from final_arima import (
@@ -22,7 +27,6 @@ from final_arima import (
     select_order,
 )
 
-
 # ─────────────────────────────────────────────
 # CONFIGURATION FLAGS
 # ─────────────────────────────────────────────
@@ -30,8 +34,8 @@ from final_arima import (
 RUN_VISUALS        = False
 
 SELECT_ORDERS      = False   # print best ARIMA order per asset (no forecast)
-RUN_STATIC_ARIMA   = False   # one-shot forecast for a single year
-RUN_LONGRUN_ARIMA  = True    # one-shot forecast across multiple years (2020→2026)
+RUN_STATIC_ARIMA   = True    # one-shot forecast for a single year
+RUN_LONGRUN_ARIMA  = False   # one-shot forecast across multiple years (2020→2026)
 RUN_FINAL_ARIMA    = False   # monthly expanding-window, AIC/BIC order
 
 RUN_MONTHLY        = False   # basic monthly (arima.py)
@@ -40,10 +44,9 @@ RUN_MONTHLY_PROP   = False   # archived
 RUN_ROLLING        = False   # archived
 RUN_ROLLING_PROP   = False   # archived
 
-year_n     = 2024   # used by single-year models
+year_n     = 2025   # used by single-year models
 start_year = 2020   # used by long-run model
 end_year   = 2025   # used by long-run model
-
 
 # ─────────────────────────────────────────────
 # Assets
@@ -56,7 +59,6 @@ assets = {
     "EUR/USD": eur_usd,
 }
 
-
 # ─────────────────────────────────────────────
 # Visualizations
 # ─────────────────────────────────────────────
@@ -65,7 +67,6 @@ if RUN_VISUALS:
     plot_assets(assets, mode="close")
     plot_assets(assets, mode="ma")
     plot_log_returns(assets)
-
 
 # ─────────────────────────────────────────────
 # ORDER SELECTION ONLY  (no forecast, no plots)
@@ -88,111 +89,38 @@ if SELECT_ORDERS:
         print(f"    Top 5 candidates:")
         print(grid.head(5).to_string(index=False))
 
-
 # ─────────────────────────────────────────────
-# STATIC ARIMA  (one-shot, single year)
+# FINAL ARIMA MODELS (from final_arima.py)
 # ─────────────────────────────────────────────
 
 if RUN_STATIC_ARIMA:
-    print("\n" + "=" * 80)
-    print("MODEL: Static ARIMA  (one-shot · AIC/BIC order · no retraining)")
-    print("=" * 80)
-
-    for name, df in assets.items():
-        train, forecast_df, best_order = forecast_static(
-            name, df, year_n,
-            criterion="aic",
-        )
-        print_quarterly_results(name, forecast_df)
-        plot_forecast_with_train(
-            f"{name}  —  Static ARIMA{best_order}",
-            train,
-            forecast_df,
-        )
-
-
-# ─────────────────────────────────────────────
-# LONG-RUN STATIC ARIMA  (one-shot, 2020→2025)
-# Fitted once on pre-2020 data, forecasts the
-# entire multi-year horizon in a single call.
-# No retraining, no re-anchoring — ever.
-# ─────────────────────────────────────────────
+    run_arima_final("Static ARIMA  (one-shot · AIC/BIC order · no retraining)",
+                    forecast_static, assets, year_n)
 
 if RUN_LONGRUN_ARIMA:
-    print("\n" + "=" * 80)
-    print(f"MODEL: Long-Run Static ARIMA  ({start_year}→{end_year}  ·  one-shot  ·  AIC/BIC order)")
-    print("=" * 80)
-
-    for name, df in assets.items():
-        train, forecast_df, best_order = forecast_static_longrun(
-            name, df, start_year, end_year,
-            criterion="aic",
-        )
-        plot_forecast_with_train(
-            f"{name}  —  Long-Run Static ARIMA{best_order}  ({start_year}→{end_year})",
-            train,
-            forecast_df,
-        )
-
-
-# ─────────────────────────────────────────────
-# FINAL ARIMA MONTHLY (expanding-window)
-# ─────────────────────────────────────────────
+    run_arima_final(f"Long-Run Static ARIMA  ({start_year}→{end_year} · one-shot · AIC/BIC order)",
+                    forecast_static_longrun, assets, year_n,
+                    start_year=start_year, end_year=end_year, longrun=True)
 
 if RUN_FINAL_ARIMA:
-    print("\n" + "=" * 80)
-    print("MODEL: Final ARIMA  (expanding window · 1st-of-month anchor · AIC/BIC order)")
-    print("=" * 80)
-
-    for name, df in assets.items():
-        train, forecast_df, best_order = forecast_final(
-            name, df, year_n,
-            criterion="aic",
-        )
-        print_quarterly_results(name, forecast_df)
-        plot_forecast_with_train(
-            f"{name}  —  Final ARIMA{best_order}",
-            train,
-            forecast_df,
-        )
-
+    run_arima_final("Final ARIMA  (expanding window · 1st-of-month anchor · AIC/BIC order)",
+                    forecast_final, assets, year_n)
 
 # ─────────────────────────────────────────────
-# BASIC MONTHLY  (arima.py)
+# ARCHIVED MODELS (from arima.py)
 # ─────────────────────────────────────────────
+
+if RUN_STATIC:
+    run_arima_basic("Static",                         forecast_asset,                            assets, year_n)
 
 if RUN_MONTHLY:
-    print("\n" + "=" * 80)
-    print("MODEL: Monthly  (expanding window · 1st-of-month anchor · fixed order)")
-    print("=" * 80)
+    run_arima_basic("Monthly",                        forecast_asset_monthly,                    assets, year_n)
 
-    for name, df in assets.items():
-        train, forecast_df, best_order = forecast_asset_monthly(
-            name, df, year_n,
-            order=None,
-            criterion="aic",
-        )
-        print_quarterly_results(name, forecast_df)
-        plot_forecast_with_train(
-            f"{name}  —  Monthly ARIMA{best_order}",
-            train,
-            forecast_df,
-        )
+if RUN_MONTHLY_PROP:
+    run_arima_basic("Monthly Propagating",            forecast_asset_monthly_propagating,        assets, year_n)
 
+if RUN_ROLLING:
+    run_arima_basic("Rolling Window",                 forecast_asset_rolling_window,             assets, year_n)
 
-# ─────────────────────────────────────────────
-# ARCHIVED MODELS
-# Set the flag to True and uncomment the import above to reactivate.
-# ─────────────────────────────────────────────
-
-# if RUN_STATIC:
-#     run_model("Static", forecast_asset)
-
-# if RUN_MONTHLY_PROP:
-#     run_model("Monthly Propagating", forecast_asset_monthly_propagating)
-
-# if RUN_ROLLING:
-#     run_model("Rolling Window", forecast_asset_rolling_window)
-
-# if RUN_ROLLING_PROP:
-#     run_model("Rolling Window Propagating", forecast_asset_rolling_window_propagating)
+if RUN_ROLLING_PROP:
+    run_arima_basic("Rolling Window Propagating",     forecast_asset_rolling_window_propagating, assets, year_n)
