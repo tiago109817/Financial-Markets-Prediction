@@ -5,6 +5,7 @@ from visual import (plot_assets, plot_log_returns)
 from runners import (
     run_arima_final,
     run_arima_basic,
+    run_randomwalk,
 )
 
 # ─────────────────────────────────────────────
@@ -27,6 +28,12 @@ from final_arima import (
     select_order,
 )
 
+from randomwalk import (
+    forecast_rw_monthly,
+    forecast_rw_static,
+    forecast_rw_longrun,
+)
+
 # ─────────────────────────────────────────────
 # CONFIGURATION FLAGS
 # ─────────────────────────────────────────────
@@ -34,9 +41,13 @@ from final_arima import (
 RUN_VISUALS        = False
 
 SELECT_ORDERS      = False   # print best ARIMA order per asset (no forecast)
-RUN_STATIC_ARIMA   = True    # one-shot forecast for a single year
-RUN_LONGRUN_ARIMA  = False   # one-shot forecast across multiple years (2020→2026)
-RUN_FINAL_ARIMA    = False   # monthly expanding-window, AIC/BIC order
+RUN_STATIC_ARIMA   = False   # one-shot forecast for a single year
+RUN_LONGRUN_ARIMA  = False   # one-shot forecast across multiple years (2020→2025)
+RUN_FINAL_ARIMA    = True    # monthly expanding-window, AIC/BIC order
+
+RUN_RW_STATIC      = False   # random walk — one-shot for a single year
+RUN_RW_MONTHLY     = False   # random walk — monthly re-anchored, expanding window
+RUN_RW_LONGRUN     = False   # random walk — one-shot across multiple years (2020→2025)
 
 RUN_MONTHLY        = False   # basic monthly (arima.py)
 RUN_STATIC         = False   # archived
@@ -44,9 +55,9 @@ RUN_MONTHLY_PROP   = False   # archived
 RUN_ROLLING        = False   # archived
 RUN_ROLLING_PROP   = False   # archived
 
-year_n     = 2025   # used by single-year models
-start_year = 2020   # used by long-run model
-end_year   = 2025   # used by long-run model
+year_n     = 2020   # used by single-year models
+start_year = 2020   # used by long-run models
+end_year   = 2025   # used by long-run models
 
 # ─────────────────────────────────────────────
 # Assets
@@ -105,6 +116,23 @@ if RUN_LONGRUN_ARIMA:
 if RUN_FINAL_ARIMA:
     run_arima_final("Final ARIMA  (expanding window · 1st-of-month anchor · AIC/BIC order)",
                     forecast_final, assets, year_n)
+
+# ─────────────────────────────────────────────
+# RANDOM WALK MODELS (from randomwalk.py)
+# ─────────────────────────────────────────────
+
+if RUN_RW_STATIC:
+    run_randomwalk("Static Random Walk",
+                   forecast_rw_static, assets, year_n)
+
+if RUN_RW_MONTHLY:
+    run_randomwalk("Monthly Random Walk  (expanding window · 1st-of-month anchor)",
+                   forecast_rw_monthly, assets, year_n)
+
+if RUN_RW_LONGRUN:
+    run_randomwalk(f"Long-Run Random Walk  ({start_year}→{end_year})",
+                   forecast_rw_longrun, assets, year_n,
+                   start_year=start_year, end_year=end_year, longrun=True)
 
 # ─────────────────────────────────────────────
 # ARCHIVED MODELS (from arima.py)

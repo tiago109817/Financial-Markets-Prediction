@@ -41,15 +41,12 @@ def _fit(series, order):
         ).fit(method_kwargs={"maxiter": 300})
 
 
-def _reconstruct_prices(anchor, log_return_forecasts):
+def _reconstruct_prices(last_price, forecasted_returns):
     """
-    Convert a sequence of forecasted log returns into a price path,
-    starting from `anchor`.
-
-        P_t = P_{t-1} * exp(r_t)
+    Convert log returns → price path.
     """
-    prices = [anchor]
-    for r in log_return_forecasts:
+    prices = [last_price]
+    for r in forecasted_returns:
         prices.append(prices[-1] * np.exp(r))
     return prices[1:]
 
@@ -131,8 +128,6 @@ def select_order(log_returns, dates,
         try:
             m = _fit(series, (p, d, q))
 
-            # Extract the criterion score for this combination.
-            # Lower is better for both AIC and BIC.
             score = m.aic if criterion == "aic" else m.bic
 
             records.append({"p": p, "d": d, "q": q,
@@ -143,12 +138,8 @@ def select_order(log_returns, dates,
                 best_order = (p, d, q)
 
         except Exception:
-            # Some (p,d,q) combinations produce singular parameter matrices
-            # or fail to converge within the iteration limit — skip silently.
             pass
 
-    # Return the full grid sorted by the chosen criterion so the caller can
-    # inspect all candidates, not just the winner.
     grid = (
         pd.DataFrame(records)
         .sort_values(criterion)
@@ -165,14 +156,18 @@ def _run(df, start, end, order):
     """
     Monthly expanding-window ARIMA engine.
 
-    For each calendar month in [start, end]:
-      1. Fit ARIMA(order) on all training data seen so far.
-      2. Anchor the price forecast at the last available close on or
-         before the 1st of the current month (most-recent trading day
-         if the 1st falls on a weekend / holiday).
-      3. Forecast log returns for every day in the month and convert
-         them back to prices via the anchor.
-      4. Append the month's results and grow the training set.
+    Each iteration covers one calendar month, defined as:
+        Jan 1  (anchor)  →  Feb 1  (last forecasted day, inclusive)
+
+    Steps per iteration:
+      1. Anchor at the real close on the 1st of the current month
+         (observable at forecast time; last available close handles weekends).
+      2. Fit ARIMA(order) on all training data seen so far.
+      3. Forecast log returns for every day Jan 1 → Feb 1 inclusive and
+         convert to prices from the anchor.
+      4. Append results (forecast + real for every day including Feb 1).
+      5. Grow training set.  Next iteration anchors at Feb 1's real close,
+         which was just appended — no separate re-anchoring step needed.
 
     Parameters
     ----------
@@ -192,36 +187,36 @@ def _run(df, start, end, order):
     while current_date <= end:
 
         # ── Month boundaries ─────────────────────────────────────────────────
+        # next_month is the 1st of the following month, which is the LAST day
+        # included in the forecast slice (forecast runs from current_date up
+        # to and INCLUDING next_month, i.e. Jan 1 → Feb 1).
         next_month = current_date + pd.offsets.MonthBegin(1)
-        if next_month > end:
-            next_month = end + pd.Timedelta(days=1)
 
-        # ── Test slice ───────────────────────────────────────────────────────
+        # ── Test slice: current 1st through next 1st, inclusive ──────────────
         test_slice = df[
             (df["Date"] >= current_date) &
-            (df["Date"] <  next_month)
+            (df["Date"] <= next_month)
         ].copy()
 
         if test_slice.empty or len(current_train) < 50:
             current_date = next_month
             continue
 
-        # ── 1st-of-month anchor ──────────────────────────────────────────────
-        # Take the last available close on or before the 1st of the month.
-        # This handles weekends and public holidays automatically.
-        first_of_month = current_date.replace(day=1)
-        anchor_rows    = df[df["Date"] <= first_of_month]
-        anchor_price   = (
+        # ── Anchor: real close on the 1st of the current month ───────────────
+        # Observable at forecast time; handles weekends/holidays by taking the
+        # last available close on or before the 1st.
+        anchor_rows  = df[df["Date"] <= current_date]
+        anchor_price = (
             anchor_rows["Close"].iloc[-1]
             if not anchor_rows.empty
-            else current_train["Close"].iloc[-1]   # safety fallback
+            else current_train["Close"].iloc[-1]
         )
 
         # ── Fit ──────────────────────────────────────────────────────────────
         series = _make_series(current_train["Log_Return"], current_train["Date"])
         fitted = _fit(series, order)
 
-        # ── Forecast ─────────────────────────────────────────────────────────
+        # ── Forecast Jan 1 → Feb 1 (inclusive) ───────────────────────────────
         forecast_returns = fitted.forecast(steps=len(test_slice))
         forecast_prices  = _reconstruct_prices(anchor_price, forecast_returns)
 
@@ -231,8 +226,15 @@ def _run(df, start, end, order):
             "Real":     test_slice["Close"].values,
         }))
 
-        # ── Grow training set ────────────────────────────────────────────────
-        current_train = pd.concat([current_train, test_slice], ignore_index=True)
+        # ── Grow training set, then move to next month ────────────────────────
+        # Only append days strictly after current_date — the anchor day (1st
+        # of current month) is already in current_train, and next_month (Feb 1)
+        # will become the next anchor and must not be duplicated.
+        new_rows = test_slice[
+            (test_slice["Date"] > current_date) &
+            (test_slice["Date"] < next_month)
+        ]
+        current_train = pd.concat([current_train, new_rows], ignore_index=True)
         current_date  = next_month
 
     return pd.concat(all_forecasts, ignore_index=True)
@@ -267,7 +269,7 @@ def forecast_final(name, df, year_n, criterion="aic"):
     best_order  : tuple       (p, d, q) chosen by the criterion.
     """
     start = pd.Timestamp(f"{year_n}-01-01")
-    end   = pd.Timestamp(f"{year_n + 1}-01-01")
+    end   = pd.Timestamp(f"{year_n}-12-01")   # last iteration: Dec 1 → Jan 1
     train = df[df["Date"] < start].copy()
 
     # ── Order selection ───────────────────────────────────────────────────────
@@ -301,31 +303,25 @@ def forecast_static(name, df, year_n, criterion="aic"):
     a long-term baseline to compare against the monthly model and ML.
 
     The key structural difference vs forecast_final:
-      - Monthly : retrained every month on growing data, anchor reset each month.
+      - Monthly : retrained every month on growing data, anchor carried
+                  forward from last forecasted price each month.
       - Static  : fitted once, anchor set at the last training close, forecast
                   propagates freely for 365 days.  Errors can accumulate over
                   time, which is precisely what makes it an honest test of
                   long-term predictive power.
 
-    Steps
-    -----
-    1. Split data into training (everything before year_n) and test (full year).
-    2. Run AIC/BIC grid search on the training set to find the best (p,d,q).
-    3. Print the selection results (top 5 models + chosen order).
-    4. Fit once and forecast all steps in one call.
-
     Parameters
     ----------
-    name      : str   Asset label (used in printed output).
+    name      : str
     df        : DataFrame
-    year_n    : int   Year to forecast (e.g. 2024).
+    year_n    : int   Year to forecast.
     criterion : str   "aic" (default) or "bic".
 
     Returns
     -------
-    train       : DataFrame   Historical data up to start of year_n.
-    forecast_df : DataFrame   Date | Forecast | Real  for the full year.
-    best_order  : tuple       (p, d, q) chosen by the criterion.
+    train       : DataFrame
+    forecast_df : DataFrame   Date | Forecast | Real
+    best_order  : tuple
     """
     start = pd.Timestamp(f"{year_n}-01-01")
     end   = pd.Timestamp(f"{year_n + 1}-01-01")
@@ -357,8 +353,6 @@ def forecast_static(name, df, year_n, criterion="aic"):
     print(fitted.params.to_string())
 
     # ── One-shot forecast for the full year ───────────────────────────────────
-    # Anchor at the last known price before the forecast horizon.
-    # From here the price path propagates freely — no re-anchoring.
     anchor_price     = train["Close"].iloc[-1]
     forecast_returns = fitted.forecast(steps=len(test))
     forecast_prices  = _reconstruct_prices(anchor_price, forecast_returns)
@@ -371,6 +365,7 @@ def forecast_static(name, df, year_n, criterion="aic"):
 
     return train, forecast_df, best_order
 
+
 def forecast_static_longrun(name, df, start_year, end_year, criterion="aic"):
     """
     Long-run static ARIMA forecast across multiple years in a single shot.
@@ -380,15 +375,9 @@ def forecast_static_longrun(name, df, start_year, end_year, criterion="aic"):
     no retraining and no re-anchoring at any point.  The price path propagates
     freely from the last known close before start_year.
 
-    This is intentionally the most demanding test of ARIMA's long-term
-    predictive power.  Any structural drift, trend change, or regime shift
-    in the real data will be visible as a growing divergence between the
-    forecast and reality — which is precisely what makes it a compelling
-    visual for the thesis.
-
     Parameters
     ----------
-    name       : str   Asset label (used in printed output).
+    name       : str
     df         : DataFrame
     start_year : int   First year of the forecast horizon (e.g. 2020).
     end_year   : int   Last  year of the forecast horizon (e.g. 2026).
@@ -396,9 +385,9 @@ def forecast_static_longrun(name, df, start_year, end_year, criterion="aic"):
 
     Returns
     -------
-    train       : DataFrame   Historical data up to start of start_year.
-    forecast_df : DataFrame   Date | Forecast | Real  for the full horizon.
-    best_order  : tuple       (p, d, q) chosen by the criterion.
+    train       : DataFrame
+    forecast_df : DataFrame   Date | Forecast | Real
+    best_order  : tuple
     """
     start = pd.Timestamp(f"{start_year}-01-01")
     end   = pd.Timestamp(f"{end_year + 1}-01-01")
@@ -431,8 +420,6 @@ def forecast_static_longrun(name, df, start_year, end_year, criterion="aic"):
     print(fitted.params.to_string())
 
     # ── One-shot forecast across the full multi-year horizon ──────────────────
-    # Anchor at the last known price before start_year. The path then
-    # propagates freely for the entire horizon — no monthly resets.
     anchor_price     = train["Close"].iloc[-1]
     forecast_returns = fitted.forecast(steps=len(test))
     forecast_prices  = _reconstruct_prices(anchor_price, forecast_returns)
@@ -442,7 +429,6 @@ def forecast_static_longrun(name, df, start_year, end_year, criterion="aic"):
         "Forecast": forecast_prices,
         "Real":     test["Close"].values,
     })
-
 
     # ── Final day comparison ──────────────────────────────────────────────────
     last  = forecast_df.iloc[-1]
@@ -455,4 +441,5 @@ def forecast_static_longrun(name, df, start_year, end_year, criterion="aic"):
         print(f"  Forecast   :  {last['Forecast']:.2f}")
         print(f"  Real       :  {last['Real']:.2f}")
     print(f"  Error      :  {error:.2f}%")
+
     return train, forecast_df, best_order

@@ -196,7 +196,7 @@ def plot_forecast_with_train(name, train_df, forecast_df):
     """
 
     fig, ax = plt.subplots(figsize=(12, 4))
-    fig.suptitle(f"{name} — ARIMA Forecast", fontsize=14, fontweight="bold")
+    fig.suptitle(f"{name}", fontsize=14, fontweight="bold")
     
     # Historical training data
     ax.plot(
@@ -225,6 +225,106 @@ def plot_forecast_with_train(name, train_df, forecast_df):
     
     ax.set_ylabel("Price")
     ax.legend()
+    ax.grid(axis='y', alpha=0.5)
+
+    _format_x_axis(ax)
+
+    plt.tight_layout()
+    plt.show()
+
+
+# ─────────────────────────────────────────────
+# Random Walk Plot  (expected path + sigma bands)
+# ─────────────────────────────────────────────
+
+def plot_rw_forecast(name, train_df, forecast_df):
+    """
+    Plot Random Walk forecasting results with GBM confidence bands.
+
+    Components:
+        - Training data (historical fit period)
+        - Real observed values (out-of-sample)
+        - Expected path  (deterministic drift, r_t = mu for all t)
+        - ±1σ band  (shaded, darker)  — ~68% of random paths fall inside
+        - ±2σ band  (shaded, lighter) — ~95% of random paths fall inside
+
+    The bands are derived from the GBM distributional result:
+
+        log(P_t / P_0) ~ Normal(mu * t,  sigma² * t)
+
+    so the band width grows proportionally to sqrt(t) from each anchor.
+    For the monthly model the bands restart from the new anchor every month;
+    for the static and long-run models they expand continuously from day 1.
+
+    Parameters
+    ----------
+    name        : str         Title label (asset name + model description).
+    train_df    : DataFrame   Historical data with columns Date, Close.
+    forecast_df : DataFrame   Output from any forecast_rw_* function.
+                              Must contain: Date, Forecast, Real,
+                              Upper1, Lower1, Upper2, Lower2.
+    """
+    fig, ax = plt.subplots(figsize=(12, 4))
+    fig.suptitle(f"{name}", fontsize=14, fontweight="bold")
+
+    dates = forecast_df["Date"]
+
+    # Reuse the same matplotlib default colors as plot_forecast_with_train:
+    #   C0 (blue)   → Train
+    #   C1 (orange) → Real
+    #   C2 (green)  → Forecast / Expected path
+    # Bands are tinted C2 so they read as an extension of the forecast line.
+
+    # ── ±2σ band (wider, lightest) ────────────────────────────────────────────
+    ax.fill_between(
+        dates,
+        forecast_df["Lower2"],
+        forecast_df["Upper2"],
+        alpha=0.12,
+        color="C2",
+        label="±2σ band  (~95%)",
+    )
+
+    # ── ±1σ band (narrower, slightly darker) ─────────────────────────────────
+    ax.fill_between(
+        dates,
+        forecast_df["Lower1"],
+        forecast_df["Upper1"],
+        alpha=0.25,
+        color="C2",
+        label="±1σ band  (~68%)",
+    )
+
+    # ── Training data (C0 blue — identical to ARIMA plot) ────────────────────
+    ax.plot(
+        train_df["Date"],
+        train_df["Close"],
+        color="C0",
+        linewidth=1.2,
+        label="Train",
+    )
+
+    # ── Real observed values (C1 orange — identical to ARIMA plot) ───────────
+    ax.plot(
+        dates,
+        forecast_df["Real"],
+        color="C1",
+        linewidth=1.5,
+        label="Real",
+    )
+
+    # ── Expected path (C2 green, solid + thicker — stands out over the bands) ─
+    ax.plot(
+        dates,
+        forecast_df["Forecast"],
+        color="C2",
+        linestyle="--",
+        linewidth=2.0,
+        label="Expected path  (μ drift)",
+    )
+
+    ax.set_ylabel("Price")
+    ax.legend(fontsize=8)
     ax.grid(axis='y', alpha=0.5)
 
     _format_x_axis(ax)
