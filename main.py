@@ -6,6 +6,7 @@ from runners import (
     run_arima_final,
     run_arima_basic,
     run_randomwalk,
+    run_xgb,
 )
 
 # ─────────────────────────────────────────────
@@ -34,6 +35,12 @@ from randomwalk import (
     forecast_rw_longrun,
 )
 
+from boosting import (
+    forecast_xgb_monthly,
+    forecast_xgb_static,
+    forecast_xgb_longrun,
+)
+
 # ─────────────────────────────────────────────
 # CONFIGURATION FLAGS
 # ─────────────────────────────────────────────
@@ -43,11 +50,15 @@ RUN_VISUALS        = False
 SELECT_ORDERS      = False   # print best ARIMA order per asset (no forecast)
 RUN_STATIC_ARIMA   = False   # one-shot forecast for a single year
 RUN_LONGRUN_ARIMA  = False   # one-shot forecast across multiple years (2020→2025)
-RUN_FINAL_ARIMA    = True    # monthly expanding-window, AIC/BIC order
+RUN_FINAL_ARIMA    = False   # monthly expanding-window, AIC/BIC order
 
 RUN_RW_STATIC      = False   # random walk — one-shot for a single year
 RUN_RW_MONTHLY     = False   # random walk — monthly re-anchored, expanding window
-RUN_RW_LONGRUN     = False   # random walk — one-shot across multiple years (2020→2025)
+RUN_RW_LONGRUN     = True    # random walk — one-shot across multiple years (2020→2025)
+
+RUN_XGB_MONTHLY    = False   # XGBoost — monthly expanding window (mirrors ARIMA monthly)
+RUN_XGB_STATIC     = False   # XGBoost — one-shot for a single year
+RUN_XGB_LONGRUN    = False   # XGBoost — one-shot across multiple years (2020→2025)
 
 RUN_MONTHLY        = False   # basic monthly (arima.py)
 RUN_STATIC         = False   # archived
@@ -55,7 +66,7 @@ RUN_MONTHLY_PROP   = False   # archived
 RUN_ROLLING        = False   # archived
 RUN_ROLLING_PROP   = False   # archived
 
-year_n     = 2020   # used by single-year models
+year_n     = 2025   # used by single-year models
 start_year = 2020   # used by long-run models
 end_year   = 2025   # used by long-run models
 
@@ -80,7 +91,7 @@ if RUN_VISUALS:
     plot_log_returns(assets)
 
 # ─────────────────────────────────────────────
-# ORDER SELECTION ONLY  (no forecast, no plots)
+# ARIMA ORDER SELECTION ONLY  (no forecast, no plots)
 # ─────────────────────────────────────────────
 
 if SELECT_ORDERS:
@@ -133,6 +144,23 @@ if RUN_RW_LONGRUN:
     run_randomwalk(f"Long-Run Random Walk  ({start_year}→{end_year})",
                    forecast_rw_longrun, assets, year_n,
                    start_year=start_year, end_year=end_year, longrun=True)
+
+# ─────────────────────────────────────────────
+# XGBOOST MODELS (from boosting.py)
+# ─────────────────────────────────────────────
+
+if RUN_XGB_MONTHLY:
+    run_xgb("XGBoost  (expanding window · 1st-of-month anchor · CV hyperparams)",
+            forecast_xgb_monthly, assets, year_n)
+
+if RUN_XGB_STATIC:
+    run_xgb("XGBoost  (static · one-shot · CV hyperparams)",
+            forecast_xgb_static, assets, year_n)
+
+if RUN_XGB_LONGRUN:
+    run_xgb(f"XGBoost  (long-run · {start_year}→{end_year} · CV hyperparams)",
+            forecast_xgb_longrun, assets, year_n,
+            start_year=start_year, end_year=end_year, longrun=True)
 
 # ─────────────────────────────────────────────
 # ARCHIVED MODELS (from arima.py)

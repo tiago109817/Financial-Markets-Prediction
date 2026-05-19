@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import matplotlib.ticker as mticker
 import pandas as pd
 
 # ─────────────────────────────────────────────
@@ -45,6 +46,14 @@ def _format_x_axis(ax):
     plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha="right")
 
 
+def _format_y_axis(ax):
+    # Use plain decimal notation on the y-axis — avoids scientific notation
+    # on large prices (e.g. Bitcoin at 60,000) or small values (EUR/USD).
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(
+        lambda x, _: f"{x:,.2f}" if abs(x) < 1e4 else f"{x:,.0f}"
+    ))
+
+
 
 # ─────────────────────────────────────────────
 # Main plot function
@@ -80,6 +89,7 @@ def plot_assets(assets, mode):
         ax.grid(axis='y', alpha=0.5)
 
         _format_x_axis(ax)
+        _format_y_axis(ax)
 
         plt.tight_layout()
         plt.show()
@@ -121,6 +131,7 @@ def plot_log_returns(assets):
     ax.grid(True, alpha=0.3)
 
     _format_x_axis(ax)
+    _format_y_axis(ax)
 
     plt.tight_layout()
     plt.show()
@@ -228,6 +239,7 @@ def plot_forecast_with_train(name, train_df, forecast_df):
     ax.grid(axis='y', alpha=0.5)
 
     _format_x_axis(ax)
+    _format_y_axis(ax)
 
     plt.tight_layout()
     plt.show()
@@ -328,6 +340,81 @@ def plot_rw_forecast(name, train_df, forecast_df):
     ax.grid(axis='y', alpha=0.5)
 
     _format_x_axis(ax)
+    _format_y_axis(ax)
+
+    plt.tight_layout()
+    plt.show()
+
+
+# ─────────────────────────────────────────────
+# Random Walk Plot — forecast year only
+# ─────────────────────────────────────────────
+
+def plot_rw_forecast_zoom(name, forecast_df):
+    """
+    Same as plot_rw_forecast but zoomed into the forecast year only —
+    no training data, x-axis covers only the forecast period.
+
+    Useful for the monthly model where the full-history plot compresses
+    the forecast window and makes the bands hard to read.
+
+    Parameters
+    ----------
+    name        : str         Title label.
+    forecast_df : DataFrame   Output from forecast_rw_monthly.
+                              Must contain: Date, Forecast, Real,
+                              Upper1, Lower1, Upper2, Lower2.
+    """
+    fig, ax = plt.subplots(figsize=(12, 4))
+    fig.suptitle(f"{name} — Zoom In", fontsize=14, fontweight="bold")
+
+    dates = forecast_df["Date"]
+
+    # ── ±2σ band ──────────────────────────────────────────────────────────────
+    ax.fill_between(
+        dates,
+        forecast_df["Lower2"],
+        forecast_df["Upper2"],
+        alpha=0.12,
+        color="C2",
+        label="±2σ band  (~95%)",
+    )
+
+    # ── ±1σ band ──────────────────────────────────────────────────────────────
+    ax.fill_between(
+        dates,
+        forecast_df["Lower1"],
+        forecast_df["Upper1"],
+        alpha=0.25,
+        color="C2",
+        label="±1σ band  (~68%)",
+    )
+
+    # ── Real observed values ──────────────────────────────────────────────────
+    ax.plot(
+        dates,
+        forecast_df["Real"],
+        color="C1",
+        linewidth=1.5,
+        label="Real",
+    )
+
+    # ── Expected path ─────────────────────────────────────────────────────────
+    ax.plot(
+        dates,
+        forecast_df["Forecast"],
+        color="C2",
+        linestyle="--",
+        linewidth=2.0,
+        label="Expected path  (μ drift)",
+    )
+
+    ax.set_ylabel("Price")
+    ax.legend(fontsize=8)
+    ax.grid(axis='y', alpha=0.5)
+
+    _format_x_axis(ax)
+    _format_y_axis(ax)
 
     plt.tight_layout()
     plt.show()
