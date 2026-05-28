@@ -6,92 +6,96 @@ from sklearn.model_selection import TimeSeriesSplit
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# FEATURE ENGINEERING
+# FEATURE ENGINEERING  (single source of truth — used in train AND inference)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _build_features(df):
-    """
-    Build the feature matrix from available data.
+LAGS        = [1, 2, 3, 5, 10, 21]
+MOM_WINDOWS = [5, 21]
+VOL_WINDOWS = [5, 21]
+MA_WINDOW   = 21
+_EPS        = 1e-8    # small constant to avoid divide-by-zero in vol_ratio
 
-    All features are derived exclusively from:
-      - Date       (from the original Excel, used to flag forward-filled days)
-      - Close      (from the original Excel)
-      - Log_Return (computed in data.py from Close)
+
+def _add_features(df):
+    """
+    Compute every model feature from a (Date, Close, Log_Return) frame.
+
+    This is the ONLY place features are defined.  Both the training pipeline
+    and the recursive forecaster call it, which guarantees the model always
+    sees identically-computed inputs.
 
     Features
     --------
-    From data.py:
-      Log_Return           — log return at time t.  This is the base signal.
+    lag_{n}        Lagged log returns (n = 1,2,3,5,10,21).  Short-term memory:
+                   yesterday, the last few days, one week, two weeks, one month.
 
-    Lagged log returns  (capturing autocorrelation structure):
-      lag_1                — yesterday's return (strongest short-term predictor)
-      lag_2                — two days ago
-      lag_5                — one week ago (~ 5 trading days)
-      lag_10               — two weeks ago
-      lag_21               — one month ago
+    mom_{w}        Momentum = rolling SUM of log returns over w days
+                   = log(P_t / P_{t-w}).  Captures trend DIRECTION, which the
+                   volatility features (a spread measure) cannot.
 
-    Derived from Log_Return (analogous to how Log_Return was derived from Close):
-      vol_5                — rolling 5-day std of log returns (short-term vol)
-      vol_21               — rolling 21-day std of log returns (monthly vol)
-        Both are computed over a trailing window so there is no look-ahead.
-        Volatility is the single most important derived feature for financial
-        time series — markets tend to cluster high-vol days together.
+    vol_{w}        Rolling std of log returns over w days.  Volatility clusters
+                   in markets, so this is a strong predictor of the *size* of
+                   the next move.
 
-    Derived from Date:
-      is_filled            — 1 if the row is a weekend / holiday that was
-                             forward-filled in data.py, 0 otherwise.
-                             Constructed from the date alone (no external data).
-                             Forward-filled days have zero *true* return, so
-                             their lagged features carry information about
-                             the previous trading session rather than new signal.
+    vol_ratio      vol_5 / vol_21.  >1 means short-term volatility is elevated
+                   relative to the monthly baseline — a simple regime flag.
+
+    ma_gap_21      log(Close / 21-day mean of Close).  How far price sits above
+                   or below its own recent average — a mean-reversion signal.
+
+    dow            Day-of-week (0=Mon … 6=Sun) of the feature row.  Captures
+                   any weak day-of-week effect.
+
+    is_filled      1 if the row is a weekend (forward-filled), else 0.
 
     Target
     ------
-      next_return          — Log_Return shifted by -1 (the value we predict).
-                             Converted back to prices via _reconstruct_prices.
+    next_return    Log_Return shifted by -1 — the value the model predicts.
 
-    All rows with any NaN (from lagging / rolling) are dropped before returning.
+    NaN rows (from lagging / rolling) are NOT dropped here; callers decide,
+    because the recursive forecaster only ever reads the final row.
     """
     f = df.copy()
+    f["Date"] = pd.to_datetime(f["Date"])
 
-    for lag in [1, 2, 5, 10, 21]:
-        f[f"lag_{lag}"] = f["Log_Return"].shift(lag)
+    for n in LAGS:
+        f[f"lag_{n}"] = f["Log_Return"].shift(n)
 
-    f["vol_5"]  = f["Log_Return"].rolling(5).std()
-    f["vol_21"] = f["Log_Return"].rolling(21).std()
+    for w in MOM_WINDOWS:
+        f[f"mom_{w}"] = f["Log_Return"].rolling(w).sum()
 
-    # Weekend = Saturday (5) or Sunday (6) — the bulk of forward-filled days.
-    f["is_filled"] = (pd.to_datetime(f["Date"]).dt.dayofweek >= 5).astype(int)
+    for w in VOL_WINDOWS:
+        f[f"vol_{w}"] = f["Log_Return"].rolling(w).std()
+
+    f["vol_ratio"] = f["vol_5"] / (f["vol_21"] + _EPS)
+
+    ma = f["Close"].rolling(MA_WINDOW).mean()
+    f["ma_gap_21"] = np.log(f["Close"] / ma)
+
+    f["dow"]       = f["Date"].dt.dayofweek
+    f["is_filled"] = (f["Date"].dt.dayofweek >= 5).astype(int)
 
     f["next_return"] = f["Log_Return"].shift(-1)
-
-    f = f.dropna().reset_index(drop=True)
     return f
 
 
-FEATURE_COLS = ["lag_1", "lag_2", "lag_5", "lag_10", "lag_21",
-                "vol_5", "vol_21", "is_filled"]
-TARGET_COL   = "next_return"
+FEATURE_COLS = (
+    [f"lag_{n}" for n in LAGS]
+    + [f"mom_{w}" for w in MOM_WINDOWS]
+    + [f"vol_{w}" for w in VOL_WINDOWS]
+    + ["vol_ratio", "ma_gap_21", "dow", "is_filled"]
+)
+TARGET_COL = "next_return"
+
+
+def _training_frame(df):
+    """Full feature frame with all NaN feature/target rows removed."""
+    f = _add_features(df)
+    return f.dropna(subset=FEATURE_COLS + [TARGET_COL]).reset_index(drop=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PRICE RECONSTRUCTION  (identical to final_arima.py and randomwalk.py)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _reconstruct_prices(anchor, log_return_forecasts):
-    """
-    Convert a sequence of forecasted log returns into a price path.
-
-        P_t = P_{t-1} * exp(r_t)
-    """
-    prices = [anchor]
-    for r in log_return_forecasts:
-        prices.append(prices[-1] * np.exp(r))
-    return prices[1:]
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# HYPERPARAMETER SELECTION  (time-series CV)
+# HYPERPARAMETER SELECTION  (regularised time-series CV grid)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _select_params(features_df, n_splits=5):
@@ -101,33 +105,39 @@ def _select_params(features_df, n_splits=5):
     Why time-series CV?
     -------------------
     Standard k-fold shuffles the data, so future observations leak into the
-    training fold.  TimeSeriesSplit always trains on the past and validates
-    on the future, preserving the causal structure of the problem — exactly
-    as we do with ARIMA order selection on the training set only.
+    training fold.  TimeSeriesSplit always trains on the past and validates on
+    the future — the same discipline as fitting ARIMA only on pre-year_n data.
 
-    Grid searched
-    -------------
-      n_estimators  : boosting rounds
-      max_depth     : tree depth (controls complexity / overfitting)
-      learning_rate : shrinkage per tree
+    Grid
+    ----
+    n_estimators      number of boosting rounds (trees)
+    max_depth         tree depth — controls complexity / overfitting
+    learning_rate     shrinkage per tree (low = more conservative)
+    subsample         fraction of ROWS each tree sees (row bagging)
+    colsample_bytree  fraction of FEATURES each tree sees (column bagging)
 
-    Scoring: mean absolute error (MAE) on log returns.
-    MAE is preferred over MSE because financial returns have occasional large
-    outliers (crashes, rallies) that would dominate squared error and bias
-    the search towards sparser models than necessary.
+    subsample and colsample_bytree are the two most effective XGBoost
+    regularisers after depth: by showing each tree only a random slice of the
+    data they stop it memorising the noise that dominates daily returns.
+
+    Scoring: mean absolute error (MAE) on log returns.  MAE is preferred over
+    MSE because returns have occasional large outliers (crashes, rallies) that
+    would otherwise dominate a squared-error objective.
 
     Returns
     -------
-    best_params : dict
-    results_df  : DataFrame  (full grid, sorted by mean CV MAE)
+    best_params : dict        lowest-MAE combination
+    results_df  : DataFrame    full grid, sorted by mean CV MAE
     """
     X = features_df[FEATURE_COLS].values
     y = features_df[TARGET_COL].values
 
     param_grid = {
-        "n_estimators":  [100, 300, 500],
-        "max_depth":     [2, 3, 5],
-        "learning_rate": [0.01, 0.05, 0.1],
+        "n_estimators":     [100, 200, 300, 400],
+        "max_depth":        [2, 3, 4],
+        "learning_rate":    [0.008, 0.01, 0.03],
+        "subsample":        [0.7, 1.0],
+        "colsample_bytree": [0.7, 1.0],
     }
 
     tscv    = TimeSeriesSplit(n_splits=n_splits)
@@ -136,40 +146,47 @@ def _select_params(features_df, n_splits=5):
     for n_est in param_grid["n_estimators"]:
         for depth in param_grid["max_depth"]:
             for lr in param_grid["learning_rate"]:
+                for sub in param_grid["subsample"]:
+                    for col in param_grid["colsample_bytree"]:
 
-                fold_maes = []
+                        fold_maes = []
+                        for tr_idx, val_idx in tscv.split(X):
+                            with warnings.catch_warnings():
+                                warnings.simplefilter("ignore")
+                                m = XGBRegressor(
+                                    n_estimators=n_est,
+                                    max_depth=depth,
+                                    learning_rate=lr,
+                                    subsample=sub,
+                                    colsample_bytree=col,
+                                    objective="reg:squarederror",
+                                    random_state=42,
+                                    n_jobs=-1,
+                                    verbosity=0,
+                                )
+                                m.fit(X[tr_idx], y[tr_idx])
 
-                for train_idx, val_idx in tscv.split(X):
-                    X_tr, X_val = X[train_idx], X[val_idx]
-                    y_tr, y_val = y[train_idx], y[val_idx]
+                            fold_maes.append(
+                                np.mean(np.abs(m.predict(X[val_idx]) - y[val_idx]))
+                            )
 
-                    with warnings.catch_warnings():
-                        warnings.simplefilter("ignore")
-                        m = XGBRegressor(
-                            n_estimators=n_est,
-                            max_depth=depth,
-                            learning_rate=lr,
-                            objective="reg:squarederror",
-                            random_state=42,
-                            verbosity=0,
-                        )
-                        m.fit(X_tr, y_tr)
+                        records.append({
+                            "n_estimators":     n_est,
+                            "max_depth":        depth,
+                            "learning_rate":    lr,
+                            "subsample":        sub,
+                            "colsample_bytree": col,
+                            "mean_mae":         np.mean(fold_maes),
+                        })
 
-                    fold_maes.append(np.mean(np.abs(m.predict(X_val) - y_val)))
-
-                records.append({
-                    "n_estimators":  n_est,
-                    "max_depth":     depth,
-                    "learning_rate": lr,
-                    "mean_mae":      np.mean(fold_maes),
-                })
-
-    results_df  = pd.DataFrame(records).sort_values("mean_mae").reset_index(drop=True)
-    best_row    = results_df.iloc[0]
+    results_df = pd.DataFrame(records).sort_values("mean_mae").reset_index(drop=True)
+    best_row   = results_df.iloc[0]
     best_params = {
-        "n_estimators":  int(best_row["n_estimators"]),
-        "max_depth":     int(best_row["max_depth"]),
-        "learning_rate": float(best_row["learning_rate"]),
+        "n_estimators":     int(best_row["n_estimators"]),
+        "max_depth":        int(best_row["max_depth"]),
+        "learning_rate":    float(best_row["learning_rate"]),
+        "subsample":        float(best_row["subsample"]),
+        "colsample_bytree": float(best_row["colsample_bytree"]),
     }
     return best_params, results_df
 
@@ -188,10 +205,10 @@ def _fit(features_df, params):
             **params,
             objective="reg:squarederror",
             random_state=42,
+            n_jobs=-1,
             verbosity=0,
         )
         m.fit(X, y)
-
     return m
 
 
@@ -200,27 +217,23 @@ def _fit(features_df, params):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _print_params(name, best_params, results_df):
-    """
-    Print hyperparameter selection results.
-    Mirrors the ARIMA order-selection output format for consistency.
-    """
+    """Print hyperparameter selection results (mirrors ARIMA order output)."""
     print(f"\n{'=' * 60}")
     print(f"  {name}  —  XGBoost hyperparameter selection")
     print(f"{'=' * 60}")
     print(f"  Best params : n_estimators={best_params['n_estimators']}, "
           f"max_depth={best_params['max_depth']}, "
-          f"learning_rate={best_params['learning_rate']}")
+          f"learning_rate={best_params['learning_rate']}, "
+          f"subsample={best_params['subsample']}, "
+          f"colsample_bytree={best_params['colsample_bytree']}")
     print(f"  Top 5 candidates (by CV MAE):")
     print(results_df.head(5).to_string(index=False))
 
 
 def _print_feature_importance(name, model):
     """
-    Print normalised gain-based feature importances.
-
-    XGBoost assigns each feature a score based on how much it reduces the
-    loss across all trees.  This is the gain-based importance — the most
-    informative metric for understanding which features drive predictions.
+    Print normalised gain-based feature importances — the XGBoost analogue of
+    ARIMA's fitted coefficients: it shows which inputs actually drove the model.
     """
     importance = dict(zip(FEATURE_COLS, model.feature_importances_))
     importance = dict(sorted(importance.items(), key=lambda x: -x[1]))
@@ -228,61 +241,66 @@ def _print_feature_importance(name, model):
     print(f"\n  Feature importances ({name}):")
     for feat, score in importance.items():
         bar = "█" * int(score * 40)
-        print(f"    {feat:<12}  {score:.4f}  {bar}")
+        print(f"    {feat:<16}  {score:.4f}  {bar}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# RECURSIVE MULTI-STEP PREDICTION
+# RECURSIVE MULTI-STEP PREDICTION  (reuses _add_features — no hand-coded vector)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _recursive_forecast(model, seed_returns, n_steps):
+def _recursive_path(model, history, future_dates, anchor_price):
     """
-    Produce n_steps forecasts recursively from a fitted model.
+    Forecast a price path recursively, one calendar day at a time.
 
-    XGBoost is a cross-sectional model — it cannot natively produce a
-    multi-step forecast the way ARIMA's .forecast(steps=N) does.  Instead:
-      1. Build the feature vector from the current return buffer.
-      2. Predict the next return.
-      3. Append the prediction to the buffer (it becomes lag_1 next step).
-      4. Repeat until n_steps are produced.
+    XGBoost is cross-sectional — it has no native multi-step forecast like
+    ARIMA's .forecast(steps=N).  So for each future day we:
+      1. Run _add_features on the current (Date, Close, Log_Return) buffer.
+      2. Read the LAST row's feature vector (state up to the previous day).
+      3. Predict the next log return, convert to a price from the running price.
+      4. Append the synthetic (date, price, return) row to the buffer and repeat.
 
-    This is the standard recursive multi-step strategy and is applied
-    consistently across all three public functions (monthly, static, longrun).
+    Because step 1 calls the SAME function used in training, the model always
+    receives consistently-computed inputs (no ddof or calendar desync).
 
     Parameters
     ----------
     model        : fitted XGBRegressor
-    seed_returns : list   Recent log returns (must have at least 21 values).
-    n_steps      : int    Number of future steps to forecast.
+    history      : DataFrame   Real (Date, Close, Log_Return) tail ending at the
+                               anchor day — must hold at least ~22 rows so the
+                               21-day windows are valid.
+    future_dates : iterable    Dates to forecast (the test slice's dates).
+    anchor_price : float       Real close the path starts from.
 
     Returns
     -------
-    list of float   Predicted log returns (length = n_steps).
+    list of float   Forecast prices, one per future date.
     """
-    recent    = list(seed_returns[-21:])
-    predicted = []
+    buf = history[["Date", "Close", "Log_Return"]].copy()
+    buf["Date"] = pd.to_datetime(buf["Date"])
 
-    for _ in range(n_steps):
-        lags  = recent
-        vol5  = float(np.std(lags[-5:]))  if len(lags) >= 5  else 0.0
-        vol21 = float(np.std(lags[-21:])) if len(lags) >= 21 else 0.0
+    prev_price = anchor_price
+    prices     = []
 
-        x = np.array([[
-            lags[-1]  if len(lags) >= 1  else 0.0,   # lag_1
-            lags[-2]  if len(lags) >= 2  else 0.0,   # lag_2
-            lags[-5]  if len(lags) >= 5  else 0.0,   # lag_5
-            lags[-10] if len(lags) >= 10 else 0.0,   # lag_10
-            lags[-21] if len(lags) >= 21 else 0.0,   # lag_21
-            vol5,
-            vol21,
-            0.0,   # is_filled — unknown for future dates; 0 is a neutral placeholder
-        ]])
+    for d in pd.to_datetime(pd.Series(list(future_dates))).tolist():
+        feats = _add_features(buf).iloc[-1]
+        x = feats[FEATURE_COLS].to_numpy(dtype=float).reshape(1, -1)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            r = float(model.predict(x)[0])
 
-        pred = float(model.predict(x)[0])
-        predicted.append(pred)
-        recent.append(pred)
+        new_price = prev_price * np.exp(r)
+        prices.append(new_price)
 
-    return predicted
+        buf = pd.concat(
+            [buf, pd.DataFrame({"Date": [d], "Close": [new_price], "Log_Return": [r]})],
+            ignore_index=True,
+        )
+        if len(buf) > 120:                       # keep the buffer small for speed
+            buf = buf.iloc[-120:].reset_index(drop=True)
+
+        prev_price = new_price
+
+    return prices
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -297,25 +315,13 @@ def _run(df, full_features, start, end, params):
 
       For each calendar month in [start, end]:
         1. Retrain XGBoost on all feature rows whose Date < current month.
-        2. Anchor the price forecast at the real close on the 1st of the
-           current month (last available close handles weekends / holidays).
-        3. Predict next-day log returns recursively for the whole month.
-        4. Convert log returns → prices via _reconstruct_prices.
-        5. Append results and advance to the next month.
+        2. Anchor the path at the real close on the 1st of the current month
+           (last available close handles weekends / holidays).
+        3. Recursively forecast next-day log returns for the whole month and
+           convert them to prices from the anchor.
+        4. Append results, advance to the next month.
 
-    Month boundaries:
-        Jan 1  (anchor)  →  Feb 1  (last forecasted day, inclusive)
-
-    This is identical to final_arima.py and randomwalk.py so all three
-    models are directly comparable.
-
-    Parameters
-    ----------
-    df           : DataFrame   Full asset DataFrame (Date, Close, Log_Return …).
-    full_features: DataFrame   Output of _build_features(df).
-    start        : Timestamp   First day of the forecast horizon.
-    end          : Timestamp   Last  day of the forecast horizon (Dec 1).
-    params       : dict        XGBoost hyperparameters.
+    Month boundaries:  Jan 1 (anchor) → Feb 1 (last forecast day, inclusive).
 
     Returns
     -------
@@ -326,26 +332,20 @@ def _run(df, full_features, start, end, params):
 
     while current_date <= end:
 
-        # ── Month boundaries ─────────────────────────────────────────────────
-        # next_month is the 1st of the following month — the LAST day included
-        # in the test slice (Jan 1 → Feb 1, inclusive), mirroring final_arima.
         next_month = current_date + pd.offsets.MonthBegin(1)
 
-        # ── Test slice: current 1st through next 1st, inclusive ──────────────
         test_slice = df[
             (df["Date"] >= current_date) &
             (df["Date"] <= next_month)
         ].copy()
 
-        # ── Training features: all rows strictly before current month ─────────
         train_feat = full_features[full_features["Date"] < current_date].copy()
 
         if test_slice.empty or len(train_feat) < 50:
             current_date = next_month
             continue
 
-        # ── Anchor: real close on the 1st of the current month ───────────────
-        # Observable at forecast time; last available close handles weekends.
+        # Anchor: real close on / before the 1st of the current month.
         anchor_rows  = df[df["Date"] <= current_date]
         anchor_price = (
             anchor_rows["Close"].iloc[-1]
@@ -353,13 +353,14 @@ def _run(df, full_features, start, end, params):
             else train_feat["Close"].iloc[-1]
         )
 
-        # ── Fit on expanding training set ─────────────────────────────────────
         model = _fit(train_feat, params)
 
-        # ── Recursive forecast for the full month ─────────────────────────────
-        seed_returns      = list(train_feat["Log_Return"].iloc[-21:])
-        predicted_returns = _recursive_forecast(model, seed_returns, len(test_slice))
-        forecast_prices   = _reconstruct_prices(anchor_price, predicted_returns)
+        # Seed the recursion with real data through the anchor day.
+        history = anchor_rows[["Date", "Close", "Log_Return"]].tail(80)
+
+        forecast_prices = _recursive_path(
+            model, history, test_slice["Date"].values, anchor_price
+        )
 
         all_forecasts.append(pd.DataFrame({
             "Date":     test_slice["Date"].values,
@@ -378,24 +379,9 @@ def _run(df, full_features, start, end, params):
 
 def forecast_xgb_monthly(name, df, year_n):
     """
-    Full monthly XGBoost pipeline for a single asset.
-
-    Mirrors forecast_final() in final_arima.py:
-      1. Split: training = all data before year_n; horizon = year_n.
-      2. Build features on the full dataset (no leakage — future rows exist
-         but their Date is used only to slice during the engine loop).
-      3. Run CV hyperparameter search on training features only.
-      4. Run the monthly expanding-window engine with the best params.
-
-    The model is retrained every month on growing data; the anchor resets
-    to the real close at the start of each month — identical strategy to
-    the monthly ARIMA.
-
-    Parameters
-    ----------
-    name   : str   Asset label (used in printed output).
-    df     : DataFrame
-    year_n : int   Year to forecast (e.g. 2024).
+    Monthly expanding-window XGBoost for a single asset.  Mirrors
+    forecast_final() in final_arima.py: retrained every month on growing data,
+    re-anchored to the real close at the start of each month.
 
     Returns
     -------
@@ -407,7 +393,7 @@ def forecast_xgb_monthly(name, df, year_n):
     end   = pd.Timestamp(f"{year_n}-12-01")   # last iteration: Dec 1 → Jan 1
     train = df[df["Date"] < start].copy()
 
-    full_features = _build_features(df)
+    full_features = _training_frame(df)
     train_feat    = full_features[full_features["Date"] < start].copy()
 
     best_params, results_df = _select_params(train_feat)
@@ -420,32 +406,20 @@ def forecast_xgb_monthly(name, df, year_n):
 
 def forecast_xgb_static(name, df, year_n):
     """
-    Static (one-shot) XGBoost forecast for a single asset.
-
-    Mirrors forecast_static() in final_arima.py:
-      - Model fitted ONCE on all data before year_n.
-      - Forecasts the entire year recursively in a single pass.
-      - No retraining, no monthly updates.
-      - Price errors accumulate over time — honest long-horizon test.
-
-    Parameters
-    ----------
-    name   : str
-    df     : DataFrame
-    year_n : int
+    Static (one-shot) XGBoost forecast.  Mirrors forecast_static() in
+    final_arima.py: fitted ONCE on all data before year_n, then the full year
+    is forecast recursively in a single pass (errors accumulate freely).
 
     Returns
     -------
-    train       : DataFrame
-    forecast_df : DataFrame   Date | Forecast | Real
-    best_params : dict
+    train, forecast_df (Date | Forecast | Real), best_params
     """
     start = pd.Timestamp(f"{year_n}-01-01")
     end   = pd.Timestamp(f"{year_n + 1}-01-01")
     train = df[df["Date"] < start].copy()
     test  = df[(df["Date"] >= start) & (df["Date"] <= end)].copy()
 
-    full_features = _build_features(df)
+    full_features = _training_frame(df)
     train_feat    = full_features[full_features["Date"] < start].copy()
 
     best_params, results_df = _select_params(train_feat)
@@ -454,10 +428,9 @@ def forecast_xgb_static(name, df, year_n):
     model = _fit(train_feat, best_params)
     _print_feature_importance(name, model)
 
-    anchor_price      = train["Close"].iloc[-1]
-    seed_returns      = list(train_feat["Log_Return"].iloc[-21:])
-    predicted_returns = _recursive_forecast(model, seed_returns, len(test))
-    forecast_prices   = _reconstruct_prices(anchor_price, predicted_returns)
+    anchor_price    = train["Close"].iloc[-1]
+    history         = train[["Date", "Close", "Log_Return"]].tail(80)
+    forecast_prices = _recursive_path(model, history, test["Date"].values, anchor_price)
 
     forecast_df = pd.DataFrame({
         "Date":     test["Date"].values,
@@ -470,35 +443,21 @@ def forecast_xgb_static(name, df, year_n):
 
 def forecast_xgb_longrun(name, df, start_year, end_year):
     """
-    Long-run static XGBoost forecast across multiple years.
-
-    Mirrors forecast_static_longrun() in final_arima.py:
-      - Model fitted ONCE on all data before start_year.
-      - Forecasts every day from start_year through end_year recursively.
-      - No retraining, no re-anchoring at any point.
-      - The price path propagates freely — the most demanding test of
-        long-term predictive power, and the most visually striking for
-        the thesis.
-
-    Parameters
-    ----------
-    name       : str
-    df         : DataFrame
-    start_year : int   First year of the forecast horizon (e.g. 2020).
-    end_year   : int   Last  year of the forecast horizon (e.g. 2025).
+    Long-run static XGBoost forecast across multiple years.  Mirrors
+    forecast_static_longrun() in final_arima.py: fitted ONCE on all data before
+    start_year, then every day through end_year is forecast recursively with no
+    retraining and no re-anchoring — the most demanding test of long-term skill.
 
     Returns
     -------
-    train       : DataFrame
-    forecast_df : DataFrame   Date | Forecast | Real
-    best_params : dict
+    train, forecast_df (Date | Forecast | Real), best_params
     """
     start = pd.Timestamp(f"{start_year}-01-01")
     end   = pd.Timestamp(f"{end_year + 1}-01-01")
     train = df[df["Date"] < start].copy()
     test  = df[(df["Date"] >= start) & (df["Date"] <= end)].copy()
 
-    full_features = _build_features(df)
+    full_features = _training_frame(df)
     train_feat    = full_features[full_features["Date"] < start].copy()
 
     print(f"\n{'=' * 60}")
@@ -509,17 +468,18 @@ def forecast_xgb_longrun(name, df, start_year, end_year):
     best_params, results_df = _select_params(train_feat)
     print(f"  Best params : n_estimators={best_params['n_estimators']}, "
           f"max_depth={best_params['max_depth']}, "
-          f"learning_rate={best_params['learning_rate']}")
+          f"learning_rate={best_params['learning_rate']}, "
+          f"subsample={best_params['subsample']}, "
+          f"colsample_bytree={best_params['colsample_bytree']}")
     print(f"  Top 5 candidates (by CV MAE):")
     print(results_df.head(5).to_string(index=False))
 
     model = _fit(train_feat, best_params)
     _print_feature_importance(name, model)
 
-    anchor_price      = train["Close"].iloc[-1]
-    seed_returns      = list(train_feat["Log_Return"].iloc[-21:])
-    predicted_returns = _recursive_forecast(model, seed_returns, len(test))
-    forecast_prices   = _reconstruct_prices(anchor_price, predicted_returns)
+    anchor_price    = train["Close"].iloc[-1]
+    history         = train[["Date", "Close", "Log_Return"]].tail(80)
+    forecast_prices = _recursive_path(model, history, test["Date"].values, anchor_price)
 
     forecast_df = pd.DataFrame({
         "Date":     test["Date"].values,
@@ -527,7 +487,6 @@ def forecast_xgb_longrun(name, df, start_year, end_year):
         "Real":     test["Close"].values,
     })
 
-    # ── Final day comparison (mirrors final_arima.py output) ─────────────────
     last  = forecast_df.iloc[-1]
     error = ((last["Forecast"] - last["Real"]) / last["Real"]) * 100
     print(f"\n  Final day  :  {last['Date'].date()}")
