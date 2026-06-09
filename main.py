@@ -7,6 +7,7 @@ from runners import (
     run_arima_basic,
     run_randomwalk,
     run_xgb,
+    run_rnn,
 )
 
 # ─────────────────────────────────────────────
@@ -41,6 +42,12 @@ from boosting import (
     forecast_xgb_longrun,
 )
 
+from rnn import (
+    forecast_rnn_monthly,
+    forecast_rnn_static,
+    forecast_rnn_longrun,
+)
+
 # ─────────────────────────────────────────────
 # CONFIGURATION FLAGS
 # ─────────────────────────────────────────────
@@ -56,9 +63,13 @@ RUN_RW_STATIC      = False   # random walk — one-shot for a single year
 RUN_RW_MONTHLY     = False   # random walk — monthly re-anchored, expanding window
 RUN_RW_LONGRUN     = False   # random walk — one-shot across multiple years (2020→2025)
 
-RUN_XGB_MONTHLY    = True    # XGBoost — monthly expanding window (mirrors ARIMA monthly)
+RUN_XGB_MONTHLY    = False   # XGBoost — monthly expanding window (mirrors ARIMA monthly)
 RUN_XGB_STATIC     = False   # XGBoost — one-shot for a single year
 RUN_XGB_LONGRUN    = False   # XGBoost — one-shot across multiple years (2020→2025)
+
+RUN_RNN_MONTHLY    = False   # LSTM — monthly expanding window (mirrors ARIMA monthly)
+RUN_RNN_STATIC     = False   # LSTM — one-shot for a single year
+RUN_RNN_LONGRUN    = True    # LSTM — one-shot across multiple years (2020→2025)
 
 RUN_MONTHLY        = False   # basic monthly (arima.py)
 RUN_STATIC         = False   # archived
@@ -66,7 +77,7 @@ RUN_MONTHLY_PROP   = False   # archived
 RUN_ROLLING        = False   # archived
 RUN_ROLLING_PROP   = False   # archived
 
-year_n     = 2022   # used by single-year models
+year_n     = 2025   # used by single-year models
 start_year = 2020   # used by long-run models
 end_year   = 2025   # used by long-run models
 
@@ -160,6 +171,23 @@ if RUN_XGB_STATIC:
 if RUN_XGB_LONGRUN:
     run_xgb(f"XGBoost  (long-run · {start_year}→{end_year})",
             forecast_xgb_longrun, assets, year_n,
+            start_year=start_year, end_year=end_year, longrun=True)
+
+# ─────────────────────────────────────────────
+# RNN / LSTM MODELS (from rnn.py)
+# ─────────────────────────────────────────────
+
+if RUN_RNN_MONTHLY:
+    run_rnn("LSTM  (expanding window)",
+            forecast_rnn_monthly, assets, year_n)
+
+if RUN_RNN_STATIC:
+    run_rnn("LSTM  (static)",
+            forecast_rnn_static, assets, year_n)
+
+if RUN_RNN_LONGRUN:
+    run_rnn(f"LSTM  (long-run · {start_year}→{end_year})",
+            forecast_rnn_longrun, assets, year_n,
             start_year=start_year, end_year=end_year, longrun=True)
 
 # ─────────────────────────────────────────────

@@ -134,3 +134,51 @@ def run_xgb(model_name, model_func, assets, year_n,
             train,
             forecast_df,
         )
+
+# ─────────────────────────────────────────────
+# RNN / LSTM models (from rnn.py)
+# ─────────────────────────────────────────────
+
+def run_rnn(model_name, model_func, assets, year_n,
+            start_year=None, end_year=None, longrun=False):
+    """
+    Runner for all three LSTM variants.
+
+    Return signature of all three rnn functions:
+        (train, forecast_df, best_config)
+
+    Like XGBoost there are no confidence bands, so plot_forecast_with_train is
+    reused.  The selection grid is printed by the model function itself; here we
+    just surface the chosen architecture in the plot title.
+
+    Parameters
+    ----------
+    model_name : str    Label printed in the section header and plot title.
+    model_func : callable
+        One of: forecast_rnn_static, forecast_rnn_monthly, forecast_rnn_longrun.
+    assets     : dict   {name: DataFrame}
+    year_n     : int    Single-year target (used by static and monthly).
+    start_year : int    Only used when longrun=True.
+    end_year   : int    Only used when longrun=True.
+    longrun    : bool   When True, calls model_func(name, df, start_year, end_year).
+    """
+    print("\n" + "=" * 80)
+    print(f"MODEL: {model_name}")
+    print("=" * 80)
+
+    for name, df in assets.items():
+
+        if longrun:
+            train, forecast_df, cfg = model_func(name, df, start_year, end_year)
+        else:
+            train, forecast_df, cfg = model_func(name, df, year_n)
+
+        cfg_str = (f"seq={cfg['seq_len']}  hidden={cfg['hidden_size']}  "
+                   f"layers={cfg['num_layers']}  lr={cfg['learning_rate']}")
+
+        print_quarterly_results(name, forecast_df)
+        plot_forecast_with_train(
+            f"{name}  —  {model_name}  ({cfg_str})",
+            train,
+            forecast_df,
+        )
