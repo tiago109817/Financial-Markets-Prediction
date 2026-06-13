@@ -52,7 +52,7 @@ from rnn import (
 # CONFIGURATION FLAGS
 # ─────────────────────────────────────────────
 
-RUN_VISUALS        = False   # plots of price series, log returns, and forecasts
+RUN_VISUALS        = True    # plots of price series, log returns, and forecasts
 
 SELECT_ORDERS      = False   # print best ARIMA order per asset (no forecast)
 RUN_STATIC_ARIMA   = False   # one-shot forecast for a single year
@@ -69,7 +69,7 @@ RUN_XGB_LONGRUN    = False   # XGBoost — one-shot across multiple years (2020�
 
 RUN_RNN_MONTHLY    = False   # LSTM — monthly expanding window (mirrors ARIMA monthly)
 RUN_RNN_STATIC     = False   # LSTM — one-shot for a single year
-RUN_RNN_LONGRUN    = True    # LSTM — one-shot across multiple years (2020→2025)
+RUN_RNN_LONGRUN    = False   # LSTM — one-shot across multiple years (2020→2025)
 
 RUN_MONTHLY        = False   # basic monthly (arima.py)
 RUN_STATIC         = False   # archived
@@ -97,9 +97,9 @@ assets = {
 # ─────────────────────────────────────────────
 
 if RUN_VISUALS:
-    plot_assets(assets, mode="close")
-    plot_assets(assets, mode="ma")
-    # plot_log_returns(assets)
+    # plot_assets(assets, mode="close")
+    # plot_assets(assets, mode="ma")
+    plot_log_returns(assets)
 
 # ─────────────────────────────────────────────
 # ARIMA ORDER SELECTION ONLY  (no forecast, no plots)
