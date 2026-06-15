@@ -127,7 +127,16 @@ def plot_log_returns(assets):
     ax.axhline(0, color="black", linewidth=0.8, linestyle="--")
 
     ax.set_ylabel("Log Return")
-    ax.legend()
+    legend = ax.legend(
+        fontsize=11,
+        handlelength=3.0,
+        borderpad=1.2
+    )
+
+    for line in legend.get_lines():
+        line.set_linewidth(2.5)
+    
+    
     ax.grid(True, alpha=0.3)
 
     _format_x_axis(ax)
@@ -412,6 +421,51 @@ def plot_rw_forecast_zoom(name, forecast_df):
     ax.set_ylabel("Price")
     ax.legend(fontsize=8)
     ax.grid(axis='y', alpha=0.5)
+
+    _format_x_axis(ax)
+    _format_y_axis(ax)
+
+    plt.tight_layout()
+    plt.show()
+    
+# ─────────────────────────────────────────────
+# Future Forecast Plot (multi-model comparison)
+# ─────────────────────────────────────────────
+
+def plot_future_forecast(name, history_df, forecast_df, tail_days=365):
+    """Plot the out-of-sample future forecast (no real values to compare)."""
+    fig, ax = plt.subplots(figsize=(12, 4))
+    fig.suptitle(f"{name}", fontsize=14, fontweight="bold")
+
+    fdates = forecast_df["Date"]
+
+    # Vivid, well-separated colours for the four model paths.
+    MODEL_COLORS = {
+        "ARIMA":   "#0674F2",   # bright blue
+        "RW":      "#111111",   # near-black (the benchmark — make it read as the anchor)
+        "XGBoost": "#00FF1E",   # emerald green
+        "LSTM":    "#E6194B",   # vivid crimson
+    }
+
+    # ── Random-walk uncertainty bands (neutral grey, behind everything) ──────
+    ax.fill_between(fdates, forecast_df["Lower2"], forecast_df["Upper2"],
+                    alpha=0.12, color="#9AA7B2", label="RW ±2σ")
+    ax.fill_between(fdates, forecast_df["Lower1"], forecast_df["Upper1"],
+                    alpha=0.22, color="#9AA7B2", label="RW ±1σ")
+
+    # ── Recent real history ──────────────────────────────────────────────────
+    hist = history_df.tail(tail_days)
+    ax.plot(hist["Date"], hist["Close"], color="#555555", linewidth=1.6,
+            label="Real (history)")
+
+    # ── Model forecast paths ─────────────────────────────────────────────────
+    for model, color in MODEL_COLORS.items():
+        ax.plot(fdates, forecast_df[model], linestyle="--", linewidth=1.9,
+                color=color, label=model)
+
+    ax.set_ylabel("Price")
+    ax.legend(fontsize=8, ncol=2)
+    ax.grid(axis="y", alpha=0.5)
 
     _format_x_axis(ax)
     _format_y_axis(ax)

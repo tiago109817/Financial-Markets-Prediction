@@ -3,6 +3,7 @@ from visual import (
     plot_forecast_with_train,
     plot_rw_forecast,
     plot_rw_forecast_zoom,
+    plot_future_forecast,
 )
 
 
@@ -182,3 +183,37 @@ def run_rnn(model_name, model_func, assets, year_n,
             train,
             forecast_df,
         )
+        
+        
+# ─────────────────────────────────────────────
+# FUTURE FORECAST (from future.py)
+# ─────────────────────────────────────────────
+
+def run_future(model_name, model_func, assets):
+    """
+    Runner for the future (out-of-sample) forecast.
+ 
+    Unlike the other runners there are no real future prices, so there is
+    nothing to score: model_func returns (history, forecast_df, info) and we
+    simply print the parameters chosen and plot every model's path together
+    with the random-walk confidence bands.
+ 
+    model_func : callable   forecast_future from future.py
+    assets     : dict       {name: DataFrame}
+    """
+    print("\n" + "=" * 80)
+    print(f"MODEL: {model_name}")
+    print("=" * 80)
+ 
+    for name, df in assets.items():
+        history, forecast_df, info = model_func(name, df)
+ 
+        # Surface the fitted parameters each model chose (printed by the model
+        # too, but echoed here for a clean per-asset summary).
+        print(f"\n  {name} — fitted parameters")
+        print(f"    ARIMA   : order {info['ARIMA']['order']}")
+        print(f"    RW      : mu={info['RW']['mu']}, sigma={info['RW']['sigma']}")
+        print(f"    XGBoost : {info['XGBoost']['params']}")
+        print(f"    LSTM    : {info['LSTM']['config']}")
+ 
+        plot_future_forecast(f"{name}  —  {model_name}", history, forecast_df)

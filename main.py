@@ -8,6 +8,7 @@ from runners import (
     run_randomwalk,
     run_xgb,
     run_rnn,
+    run_future,
 )
 
 # ─────────────────────────────────────────────
@@ -48,11 +49,15 @@ from rnn import (
     forecast_rnn_longrun,
 )
 
+from future import forecast_future
+
 # ─────────────────────────────────────────────
 # CONFIGURATION FLAGS
 # ─────────────────────────────────────────────
 
-RUN_VISUALS        = True    # plots of price series, log returns, and forecasts
+RUN_VISUALS        = False   # plots of price series, log returns, and forecasts
+
+RUN_FUTURE         = True    # out-of-sample forecast to 2027-01-01 (no scoring)
 
 SELECT_ORDERS      = False   # print best ARIMA order per asset (no forecast)
 RUN_STATIC_ARIMA   = False   # one-shot forecast for a single year
@@ -97,8 +102,8 @@ assets = {
 # ─────────────────────────────────────────────
 
 if RUN_VISUALS:
-    # plot_assets(assets, mode="close")
-    # plot_assets(assets, mode="ma")
+    plot_assets(assets, mode="close")
+    plot_assets(assets, mode="ma")
     plot_log_returns(assets)
 
 # ─────────────────────────────────────────────
@@ -189,6 +194,13 @@ if RUN_RNN_LONGRUN:
     run_rnn(f"LSTM  (long-run · {start_year}→{end_year})",
             forecast_rnn_longrun, assets, year_n,
             start_year=start_year, end_year=end_year, longrun=True)
+
+# ─────────────────────────────────────────────
+# FUTURE FORECAST (from future.py)
+# ─────────────────────────────────────────────
+
+if RUN_FUTURE:
+    run_future("Future Forecast  (to 2027-01-01)", forecast_future, assets)
 
 # ─────────────────────────────────────────────
 # ARCHIVED MODELS (from arima.py)
